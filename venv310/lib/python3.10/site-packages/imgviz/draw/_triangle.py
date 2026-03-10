@@ -1,0 +1,72 @@
+import numpy as np
+import PIL.Image
+import PIL.ImageDraw
+from numpy.typing import NDArray
+
+from .. import _utils
+from ._ink import Ink
+from ._ink import get_pil_ink
+
+
+def triangle(
+    image: NDArray[np.uint8],
+    center: tuple[float, float],
+    size: float,
+    fill: Ink | None = None,
+    outline: Ink | None = None,
+    width: int = 1,
+) -> NDArray[np.uint8]:
+    """Draw triangle on numpy array with Pillow.
+
+    Args:
+        image: Input image.
+        center: Center point (cy, cx).
+        size: Diameter to create the triangle.
+        fill: RGB color to fill the mark. None for no fill.
+        outline: RGB color to draw the outline.
+        width: Line width.
+
+    Returns:
+        Output image.
+    """
+    dst = _utils.numpy_to_pillow(image)
+    triangle_(
+        image=dst,
+        center=center,
+        size=size,
+        fill=fill,
+        outline=outline,
+        width=width,
+    )
+    return _utils.pillow_to_numpy(dst)
+
+
+def triangle_(
+    image: PIL.Image.Image,
+    center: tuple[float, float],
+    size: float,
+    fill: Ink | None = None,
+    outline: Ink | None = None,
+    width: int = 1,
+) -> None:
+    """Draw triangle on PIL image in-place.
+
+    Args:
+        image: PIL image to draw on (modified in-place).
+        center: Center point (cy, cx).
+        size: Diameter to create the triangle.
+        fill: RGB color to fill the mark. None for no fill.
+        outline: RGB color to draw the outline.
+        width: Line width.
+    """
+    draw = PIL.ImageDraw.Draw(image)
+
+    radius = size / 2
+    cy, cx = center
+
+    x = cx + radius * np.cos(np.deg2rad(np.arange(0, 3) * 120 + 90))
+    y = cy - radius * np.sin(np.deg2rad(np.arange(0, 3) * 120 + 90))
+
+    xy = np.stack((x, y), axis=1)
+    xy = xy.flatten().tolist()
+    draw.polygon(xy, fill=get_pil_ink(fill), outline=get_pil_ink(outline), width=width)

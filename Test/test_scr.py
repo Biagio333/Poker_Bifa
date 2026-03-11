@@ -1,48 +1,57 @@
 import cv2
-import threading
+import numpy as np
+from adbblitz import AdbShotUSB
 
+ADB_PATH = "adb"          # oppure "/usr/bin/adb"
+DEVICE_SERIAL = None      # metti il seriale se ne hai più di uno
 
-class LatestFrameGrabber:
-    def __init__(self, device="/dev/video42"):
-        self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Impossibile aprire {device}")
-        self.lock = threading.Lock()
-        self.frame = None
-        self.running = True
-        self.thread = threading.Thread(target=self._reader, daemon=True)
-        self.thread.start()
+def main():
+    stream = AdbShotUSB(
+        device_serial=DEVICE_SERIAL,
+        adb_path=ADB_PATH,
+        adb_host_address="127.0.0.1",
+        adb_host_port=5037,
+        sleep_after_exception=0.01,
+        frame_buffer=1,              # meno buffer = meno lag
+        lock_video_orientation=0,
+        max_frame_rate=8,            # prova 6-10
+        byte_package_size=131072,
+        scrcpy_server_version="2.0", # se dà errore proviamo a cambiarla
+        log_level="info",
+        max_video_width=0,           # 0 = piena risoluzione
+        start_server=True,
+        connect_to_device=True,
+    )
 
-    def _reader(self):
-        while self.running:
-            ok, frame = self.cap.read()
-            if ok:
-                with self.lock:
-                    self.frame = frame
+    try:
+        while True:
+            frame = stream.get_one_screenshot()
 
-    def get_latest(self):
-        with self.lock:
-            return None if self.frame is None else self.frame.copy()
+            if frame is None:
+                continue
 
-    def close(self):
-        self.running = False
-        self.thread.join(timeout=1)
-        self.cap.release()
+            # frame pieno
+            frame_full = frame
 
+            # copia ridotta per OCR/debug veloce
+            frame_small = cv2.resize(frame_full, None, fx=0.4, fy=0.4)
 
-grabber = LatestFrameGrabber("/dev/video42")
+            # qui fai OCR su frame_small
+            # esempio:
+            # result = ocr.readtext(frame_small)
 
-try:
-    while True:
-        frame = grabber.get_latest()
-        if frame is None:
-            continue
+            cv2.imshow("small", frame_small)
 
-        # qui OCR / crop / template matching
-        cv2.imshow("latest", frame)
-        if cv2.waitKey(1) & 0xFF == 27:
-            break
-finally:
-    grabber.close()
-    cv2.destroyAllWindows()
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+
+    finally:
+        try:
+            stream.quit()
+        except Exception:
+            pass
+        cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()

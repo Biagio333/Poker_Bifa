@@ -2,3 +2,6 @@ rapidocr-onnxruntime
 opencv-python-headless
 numpy
 labelme
+flask
+numpy
+

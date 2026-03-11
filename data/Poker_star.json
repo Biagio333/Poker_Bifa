@@ -1,7 +1,25 @@
 {
-  "version": "5.11.3",
+  "version": "5.11.4",
   "flags": {},
   "shapes": [
+    {
+      "label": "carte_tavolo",
+      "points": [
+        [
+          87.0,
+          521.0
+        ],
+        [
+          319.0,
+          559.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
     {
       "label": "player_0_name",
       "points": [
@@ -246,6 +264,60 @@
         [
           296.00000000000006,
           520.8823529411766
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "carte_hero",
+      "points": [
+        [
+          10.927536231884062,
+          696.6666666666666
+        ],
+        [
+          108.02898550724643,
+          757.5362318840579
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "dealer_button",
+      "points": [
+        [
+          94.98550724637681,
+          192.31884057971018
+        ],
+        [
+          334.11594202898544,
+          714.0579710144928
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "covered_cards_area",
+      "points": [
+        [
+          25.42028985507244,
+          141.59420289855078
+        ],
+        [
+          410.92753623188406,
+          438.69565217391306
         ]
       ],
       "group_id": null,

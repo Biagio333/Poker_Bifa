@@ -17,6 +17,8 @@ class TableReader:
         self.roi_map = roi_map
         self.min_score = min_score
 
+    
+
     def read_text_from_roi(self, ocr_results, roi_name: str) -> str:
         roi = self.roi_map.get(roi_name)
         items = ocr_in_roi(ocr_results, roi, self.min_score)

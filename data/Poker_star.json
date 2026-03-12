@@ -325,6 +325,114 @@
       "shape_type": "rectangle",
       "flags": {},
       "mask": null
+    },
+    {
+      "label": "player_1_bet",
+      "points": [
+        [
+          120.30107526881721,
+          412.7956989247312
+        ],
+        [
+          151.48387096774195,
+          475.16129032258067
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "player_2_bet",
+      "points": [
+        [
+          118.4193548387097,
+          230.0
+        ],
+        [
+          150.67741935483872,
+          303.65591397849465
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "player_3_bet",
+      "points": [
+        [
+          204.97849462365593,
+          189.67741935483872
+        ],
+        [
+          263.80487804878055,
+          231.46341463414632
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "player_5_bet",
+      "points": [
+        [
+          320.56989247311833,
+          412.258064516129
+        ],
+        [
+          257.66666666666663,
+          476.2365591397849
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "player_4_bet",
+      "points": [
+        [
+          320.0322580645161,
+          247.2043010752688
+        ],
+        [
+          253.90322580645162,
+          302.0430107526882
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "player_0_bet",
+      "points": [
+        [
+          167.88172043010755,
+          664.9462365591398
+        ],
+        [
+          267.3440860215054,
+          715.483870967742
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
     }
   ],
   "imagePath": "../immage/labeled_602843874_PreFlop_0.png",

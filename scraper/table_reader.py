@@ -31,15 +31,17 @@ class TableReader:
 
     def populate_player(self, player, ocr_results):
         """
-        Popola name e stack di un singolo player.
+        Popola name, stack e puntata corrente di un singolo player.
         Cerca:
         - player_{seat}_name
         - player_{seat}_stack
+        - player_{seat}_bet
         """
         seat = player.seat
 
         name_roi_name = f"player_{seat}_name"
         stack_roi_name = f"player_{seat}_stack"
+        bet_roi_name = f"player_{seat}_bet"
 
         name_text = self.read_text_from_roi(ocr_results, name_roi_name)
         if name_text:
@@ -48,6 +50,9 @@ class TableReader:
         stack_value = self.read_amount_from_roi(ocr_results, stack_roi_name)
         if stack_value > 0:
             player.update_stack(stack_value)
+
+        bet_value = self.read_amount_from_roi(ocr_results, bet_roi_name)
+        player.update_current_bet(bet_value if bet_value > 0 else 0.0)
 
     def populate_all_players(self, table, ocr_results):
         """
@@ -80,5 +85,6 @@ class TableReader:
         for p in table.players:
             #p.name = None
             p.stack = 0.0
+            p.current_bet = 0.0
 
-        table.pot = 0.0
+        table.reset_hand_state()

@@ -288,9 +288,9 @@ class image_search:
         if all_confidences:
             max_conf = max(all_confidences)
             avg_conf = sum(all_confidences) / len(all_confidences)
-            print(f"Carte coperte - Max confidence: {max_conf:.3f}, Avg: {avg_conf:.3f}, Threshold: {threshold}")
+            #print(f"Carte coperte - Max confidence: {max_conf:.3f}, Avg: {avg_conf:.3f}, Threshold: {threshold}")
         
-        print(f"Trovate {len(found_positions)} carte coperte (threshold: {threshold})")
+        #print(f"Trovate {len(found_positions)} carte coperte (threshold: {threshold})")
         
         # Associa ogni carta coperta trovata al giocatore più vicino
         active_seats = set()

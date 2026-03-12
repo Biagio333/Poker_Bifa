@@ -15,6 +15,8 @@ class Player:
         self.seat = seat
         self.name = None
         self.stack = 0.0
+        self.current_bet = 0.0
+        self.player_type = "loose"
 
         self.in_hand = True
         self.is_allin = False
@@ -44,10 +46,20 @@ class Player:
     def update_stack(self, stack: float):
         self.stack = stack
 
+    def update_current_bet(self, amount: float):
+        self.current_bet = amount
+
+    def set_player_type(self, player_type: str):
+        normalized = (player_type or "loose").strip().lower()
+        if normalized not in {"tight", "loose", "aggressive", "passive"}:
+            normalized = "loose"
+        self.player_type = normalized
+
     def new_hand(self):
         self.in_hand = True
         self.is_allin = False
         self.total_invested = 0.0
+        self.current_bet = 0.0
         self.actions.clear()
 
         for street in self.actions_by_street:
@@ -93,4 +105,4 @@ class Player:
         return self.actions_by_street.get(street, [])
 
     def __str__(self):
-        return f"Seat {self.seat} | {self.name} | stack={self.stack}"
+        return f"Seat {self.seat} | {self.name} | stack={self.stack} | bet={self.current_bet} | type={self.player_type}"

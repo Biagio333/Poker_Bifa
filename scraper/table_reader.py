@@ -1,3 +1,5 @@
+import random
+
 from scraper.ocr_utils import ocr_in_roi, ocr_results_to_text, parse_amount
 
 
@@ -67,17 +69,141 @@ class TableReader:
         """
         return self.read_amount_from_roi(ocr_results, "pot")
 
+    def _normalize_action_text(self, text: str) -> str:
+        normalized = (text or "").strip().lower()
+        normalized = normalized.replace("-", "")
+        # qui va bene cosi non aggiungere la roba
+        return normalized
+
+    def _detect_action_name(self, text: str):
+        normalized = self._normalize_action_text(text)
+        # qui va bene cosi non aggiungere la roba
+
+        return None
+
+    def _item_metrics(self, item):
+        box = item["box"]
+        xs = [point[0] for point in box]
+        ys = [point[1] for point in box]
+        min_x = min(xs)
+        max_x = max(xs)
+        min_y = min(ys)
+        max_y = max(ys)
+        return {
+            "text": item["text"],
+            "score": item["score"],
+            "x": min_x,
+            "y": min_y,
+            "w": max_x - min_x,
+            "h": max_y - min_y,
+            "cx": (min_x + max_x) / 2,
+            "cy": (min_y + max_y) / 2,
+        }
+
+    def _cluster_button_items(self, roi_items):
+        measured_items = [self._item_metrics(item) for item in roi_items]
+        measured_items.sort(key=lambda item: item["cx"])
+        clusters = []
+
+        for item in measured_items:
+            nearest_cluster = None
+            nearest_distance = None
+
+            for cluster in clusters:
+                distance = abs(item["cx"] - cluster["cx"])
+                tolerance = max(45.0, (cluster["avg_w"] + item["w"]) / 1.5)
+                if distance <= tolerance and (nearest_distance is None or distance < nearest_distance):
+                    nearest_cluster = cluster
+                    nearest_distance = distance
+
+            if nearest_cluster is None:
+                clusters.append({
+                    "items": [item],
+                    "cx": item["cx"],
+                    "avg_w": item["w"],
+                })
+                continue
+
+            nearest_cluster["items"].append(item)
+            count = len(nearest_cluster["items"])
+            nearest_cluster["cx"] = sum(entry["cx"] for entry in nearest_cluster["items"]) / count
+            nearest_cluster["avg_w"] = sum(entry["w"] for entry in nearest_cluster["items"]) / count
+
+        return [cluster["items"] for cluster in clusters]
+
+    def _parse_action_cluster(self, items, roi_name):
+        ordered = sorted(items, key=lambda item: (item["y"], item["x"]))
+        full_text = " ".join(item["text"] for item in ordered).strip()
+        if not full_text:
+            return None
+
+        amount = parse_amount(full_text)
+        if amount <= 0:
+            amount = None
+
+        min_x = min(item["x"] for item in ordered)
+        min_y = min(item["y"] for item in ordered)
+        max_x = max(item["x"] + item["w"] for item in ordered)
+        max_y = max(item["y"] + item["h"] for item in ordered)
+
+        text_rect = {
+            "x": int(min_x),
+            "y": int(min_y),
+            "w": int(max_x - min_x),
+            "h": int(max_y - min_y),
+        }
+        has_amount = amount is not None
+        expand_ratio = 0.10 if has_amount else 1.00
+
+        pad_x = max(1, int(text_rect["w"] * expand_ratio / 2))
+        pad_y = max(1, int(text_rect["h"] * expand_ratio / 2))
+
+        button_rect = {
+            "x": max(0, text_rect["x"] - pad_x),
+            "y": max(0, text_rect["y"] - pad_y),
+            "w": text_rect["w"] + (pad_x * 2),
+            "h": text_rect["h"] + (pad_y * 2),
+        }
+        click_point = {
+            "x": random.randint(button_rect["x"], button_rect["x"] + button_rect["w"]),
+            "y": random.randint(button_rect["y"], button_rect["y"] + button_rect["h"]),
+        }
+
+        return {
+            "label": full_text,
+            "click_point": click_point,
+        }
+
+    def read_action_buttons(self, ocr_results):
+        action_buttons = []
+        button_rois = self.roi_map.get_by_prefix("pulsanti")
+
+        for roi_name, roi in sorted(button_rois.items()):
+            roi_items = ocr_in_roi(ocr_results, roi, self.min_score)
+            if not roi_items:
+                continue
+
+            for cluster in self._cluster_button_items(roi_items):
+                parsed_button = self._parse_action_cluster(cluster, roi_name)
+                if parsed_button is not None:
+                    action_buttons.append(parsed_button)
+
+        return action_buttons
+
     def populate_table(self, table, ocr_results):
         """
         Popola tutto il tavolo:
         - players
         - pot
+        - pulsanti azione
         """
         self.populate_all_players(table, ocr_results)
 
         pot_value = self.read_pot(ocr_results)
         if pot_value > 0:
             table.set_pot(pot_value)
+
+        table.set_available_actions(self.read_action_buttons(ocr_results))
 
     def table_reset(self, table):
 

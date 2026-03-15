@@ -4,10 +4,11 @@ import cv2
 import time
 import threading
 from rapidocr_onnxruntime import RapidOCR
+from collections import deque
 
 
 class OCRReader:
-    def __init__(self, scale=0.5, gray=False, min_score=0.5):
+    def __init__(self, scale=0.5, gray=False, min_score=0.5, buffer_size=5):
         self.scale = scale
         self.gray = gray
         self.min_score = min_score
@@ -17,8 +18,9 @@ class OCRReader:
         self.thread = None
         self.lock = threading.Lock()
 
-        self.last_full_frame = None
-        self.last_frame = None
+        # buffer circolare dei frame
+        self.frames = deque(maxlen=buffer_size)
+
         self.frame_id = 0
 
     def _grab_loop(self):
@@ -63,8 +65,7 @@ class OCRReader:
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
                 with self.lock:
-                    self.last_full_frame = img_full
-                    self.last_frame = img
+                    self.frames.append((img_full, img, self.frame_id))
                     self.frame_id += 1
 
             except Exception as e:
@@ -87,13 +88,28 @@ class OCRReader:
 
     def get_latest_frame(self):
         with self.lock:
-            if self.last_frame is None:
+            if not self.frames:
                 return None, None, -1
-            return self.last_full_frame.copy(), self.last_frame.copy(), self.frame_id
+
+            img_full, img, fid = self.frames[-1]
+            return img_full.copy(), img.copy(), fid
+        
+    def get_next_frame(self):
+        with self.lock:
+            if not self.frames:
+                return None, None, -1
+
+            img_full, img, fid = self.frames.popleft()
+            return img_full, img, fid
 
     def fast_screenshot(self):
-        _, img, _ = self.get_latest_frame()
+        _, img, _ = self.get_next_frame()
+
         return img
+    
+    def buffer_size(self):
+        with self.lock:
+            return len(self.frames)
 
     def run_ocr(self, img):
         t0 = time.perf_counter()

@@ -52,5 +52,12 @@ class ROIMap:
     def get(self, name: str):
         return self.data.get(name)
 
+    def get_by_prefix(self, prefix: str):
+        return {
+            name: roi
+            for name, roi in self.data.items()
+            if name == prefix or name.startswith(prefix)
+        }
+
     def all(self):
         return self.data

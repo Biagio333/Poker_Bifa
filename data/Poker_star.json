@@ -129,24 +129,6 @@
       "mask": null
     },
     {
-      "label": "pulsanti",
-      "points": [
-        [
-          0.0,
-          739.1346153846154
-        ],
-        [
-          424.03846153846143,
-          900.6730769230769
-        ]
-      ],
-      "group_id": null,
-      "description": "",
-      "shape_type": "rectangle",
-      "flags": {},
-      "mask": null
-    },
-    {
       "label": "player_0_stack",
       "points": [
         [
@@ -426,6 +408,96 @@
         [
           267.3440860215054,
           715.483870967742
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "pulsanti0",
+      "points": [
+        [
+          4.172043010752645,
+          826.7741935483871
+        ],
+        [
+          428.9032258064515,
+          896.6666666666666
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "select_amount_button",
+      "points": [
+        [
+          147.18279569892456,
+          742.9032258064516
+        ],
+        [
+          427.82795698924724,
+          783.763440860215
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "select_amount_plus",
+      "points": [
+        [
+          392.3440860215053,
+          791.2903225806451
+        ],
+        [
+          420.3010752688174,
+          813.8709677419355
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "select_amount_minus",
+      "points": [
+        [
+          218.15053763440847,
+          791.2903225806451
+        ],
+        [
+          246.10752688172056,
+          813.8709677419355
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "select_amount_value",
+      "points": [
+        [
+          153.63440860215042,
+          790.2150537634409
+        ],
+        [
+          213.8494623655913,
+          814.9462365591398
         ]
       ],
       "group_id": null,

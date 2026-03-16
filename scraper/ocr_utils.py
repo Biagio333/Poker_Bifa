@@ -109,7 +109,7 @@ def list_images(folder="immage"):
         if f.lower().endswith(valid_ext):
             files.append(os.path.join(folder, f))
 
-    files.sort()
+    files.sort(key=os.path.getmtime)
 
     return files
 

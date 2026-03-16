@@ -4,6 +4,7 @@
 
 
 import cv2
+import os
 from scraper.Scren_cap_cel import  OCRReader
 from scraper.roi_map import ROIMap
 from scraper.table_reader import TableReader
@@ -25,8 +26,11 @@ class SCR_TYPE(Enum):
     SCRCPY = 1
     IMMAGE_SAVED = 2
 
-SCRENSHOT_TYPE = SCR_TYPE.ADB
+SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
+SAVE_SCREENSHOT = False
+SAVE_SCREENSHOT_DIR = "immage"
 DISPLAY_SCALE = 0.4
+DISPLAY_PREVIEW = False
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
 
@@ -79,6 +83,16 @@ PLAYER_TYPES_BY_SEAT = {
 }
 
 def main():
+    saved_screenshot_count = 0
+    preview_window = "Poker Bifa"
+
+    if SCRENSHOT_TYPE == SCR_TYPE.ADB and SAVE_SCREENSHOT:
+        os.makedirs(SAVE_SCREENSHOT_DIR, exist_ok=True)
+
+    if DISPLAY_PREVIEW:
+        cv2.namedWindow(preview_window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(preview_window, 960, 540)
+
     
     if SCRENSHOT_TYPE == SCR_TYPE.SCRCPY:
         proc = start_scrcpy()
@@ -111,13 +125,16 @@ def main():
 
     table = Table(max_players=6, hero_seat=0)
 
-    count = 0
+    count = -1
     last_id = -1
     last_action_labels = None
     last_ollama_decision = None
     last_sent_action_labels = None
     last_pressed_action_labels = None
     wait_press_button = False
+    street_for_ocr_actions = "preflop"
+
+    table_hero_cards_old = []
     while True:
 
 
@@ -125,20 +142,32 @@ def main():
 
         if SCRENSHOT_TYPE == SCR_TYPE.IMMAGE_SAVED:
             list_img = list_images()
-            count += 1
-            if count >= len(list_img):
-                count = 0
-            print (f"Processing image: {list_img[count]}")
+            if not list_img:
+                print(f"Nessuna immagine trovata in '{SAVE_SCREENSHOT_DIR}'")
+                time.sleep(0.5)
+                continue
+            count = (count + 1) % len(list_img)
+            print(f"Processing image: {list_img[count]}")
             img = cv2.imread(list_img[count])
             img = cv2.resize(img, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
 
         if SCRENSHOT_TYPE == SCR_TYPE.ADB:
-            img = ocr.fast_screenshot()
+            img_full, img, _ = ocr.get_next_frame()
             # nessun frame ancora
             if img is None:
                 time.sleep(0.1)
                 continue
             print("Frames nel buffer:", ocr.buffer_size())
+
+            if SAVE_SCREENSHOT and img_full is not None:
+                ts = int(time.time() * 1000)
+                file_name = f"adb_{ts}_{saved_screenshot_count:06d}.png"
+                file_path = os.path.join(SAVE_SCREENSHOT_DIR, file_name)
+                if cv2.imwrite(file_path, img_full):
+                    saved_screenshot_count += 1
+                    print(f"Screenshot salvato: {file_path}")
+                else:
+                    print(f"Errore salvataggio screenshot: {file_path}")
 
 
         if SCRENSHOT_TYPE == SCR_TYPE.SCRCPY:
@@ -152,22 +181,55 @@ def main():
             print("Screenshot non riuscito")
             return
 
+        if DISPLAY_PREVIEW:
+            cv2.imshow(preview_window, img)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+
+        server.update_frame(img)
         ocr_results, ocr_time = ocr.run_ocr(img)
-        reader.table_reset(table)
+        #reader.table_reset(table)
+
+        # Cerca le carte sul tavolo
+        carte_trovate = img_search.find_table_cards(img)
+        carte_trovate = [card[0].upper() + card[1] for card in carte_trovate]
+        print(f"Carte sul tavolo: {carte_trovate}")
+
+        table.set_board_cards(carte_trovate)
+        street_for_ocr_actions = table.street
+
+        for p in table.players:         #resetto un tavolo se richiesto 
+            
+            if p.request_reset_hand:
+
+                p.request_reset_hand = False
+                reader.table_reset(table)  
+        
+        if len( table.hero_cards ) == 2:
+            if table.hero_cards != table_hero_cards_old:
+                table_hero_cards_old = list(table.hero_cards)
+                for street in table.actions_by_street:
+                    if street != "preflop":  # voglio mantenere le azioni OCR del preflop anche quando cambia la mano, perche a volte non riesce a leggerle bene e mi serve un po di memoria
+                        table.actions_by_street[street].clear()
+
 
         reader.populate_table(table, ocr_results)
+
         current_action_labels = tuple(
                     action.get("label", "").strip().lower()
                     for action in table.available_actions
                 )
+        
+
+
+
+        print(table.format_players_stats())
 
         #se ho gia preso un azione aspetto che spariscano i pulsanti per continuare
         if wait_press_button == False:
 
-            # Cerca le carte sul tavolo
-            carte_trovate = img_search.find_table_cards(img)
-            carte_trovate = [card[0].upper() + card[1] for card in carte_trovate]
-            print(f"Carte sul tavolo: {carte_trovate}")
+
 
             # Cerca le carte hero
             carte_hero = img_search.find_hero_cards(img)
@@ -201,173 +263,177 @@ def main():
 
             #print(f"OCR time: {ocr_time:.3f}s")
 
-            table.set_board_cards(carte_trovate)
             table.set_hero_cards(carte_hero)
 
+            print(f"\nMano corrente: {table.street} | Pot: {table.pot:.2f} | Board: {table.board_cards} | Hero: {table.hero_cards}")
             act = table.format_available_actions(DISPLAY_SCALE)
 
 
-            #server.update_frame(img)
-
-            print(f"\nMano corrente: {table.street} | Pot: {table.pot:.2f} | Board: {table.board_cards} | Hero: {table.hero_cards}")
-            print(table.format_available_actions(DISPLAY_SCALE))
-
-            print("\nGiocatori:")
-            print("Seat | Name           | Stack  | Bet    | Position | Type       | Status")
-            print("-----|----------------|--------|--------|----------|------------|--------")
             
-            # Identifica giocatori attivi (da carte coperte) e hero
-            hero_seat = None
-            active_players_for_equity = []
-            hero_equity = None
-            
-            for p in table.players:
-                p.set_player_type(PLAYER_TYPES_BY_SEAT.get(p.seat, "loose"))
-                pos_name = seat_to_pos.get(p.seat, "???") if p.seat is not None else "???"
-                name_str = p.name[:14] if p.name else "???"
-                stack_str = f"{p.stack:6.2f}" if p.stack is not None else "  ???"
-                bet_str = f"{p.current_bet:6.2f}" if p.current_bet is not None else "  ???"
-                seat_str = p.seat if p.seat is not None else "?"
-                type_str = p.player_type[:10]
-                
-                # Determina status basato su carte coperte
-                status = ""
-                is_active = p.seat in active_seats if p.seat is not None else False
-                
-                                # Log specifico per seat 0
-                status = "FOLDED"
-                is_active = p.seat in active_seats if p.seat is not None else False
 
-                if p.seat == table.hero_seat and len(table.hero_cards) == 2:
-                    is_active = True
+            old_current_action_labels = None
+            if table.available_actions and False:
+               
+                print(table.format_available_actions(DISPLAY_SCALE))
 
-                if is_active:
-                    status = "IN HAND"
-                    active_players_for_equity.append(p)
-                    if p.seat == table.hero_seat:
-                        hero_seat = p.seat
+                print("\nGiocatori:")
+                print("Seat | Name           | Stack  | Bet    | Position | Type       | Status")
+                print("-----|----------------|--------|--------|----------|------------|--------")
+                
+                # Identifica giocatori attivi (da carte coperte) e hero
+                hero_seat = None
+                active_players_for_equity = []
+                hero_equity = None
+                for p in table.players:
+
+                    p.set_player_type(PLAYER_TYPES_BY_SEAT.get(p.seat, "loose"))
+                    pos_name = seat_to_pos.get(p.seat, "???") if p.seat is not None else "???"
+                    name_str = p.name[:14] if p.name else "???"
+                    stack_str = f"{p.stack:6.2f}" if p.stack is not None else "  ???"
+                    bet_str = f"{p.current_bet:6.2f}" if p.current_bet is not None else "  ???"
+                    seat_str = p.seat if p.seat is not None else "?"
+                    type_str = p.player_type[:10]
                     
+                    # Determina status basato su carte coperte
+                    status = ""
+                    is_active = p.seat in active_seats if p.seat is not None else False
+                    
+                                    # Log specifico per seat 0
+                    status = "FOLDED"
+                    is_active = p.seat in active_seats if p.seat is not None else False
+
+                    if p.seat == table.hero_seat and len(table.hero_cards) == 2:
+                        is_active = True
+
+                    if is_active:
+                        status = "IN HAND"
+                        active_players_for_equity.append(p)
+                        if p.seat == table.hero_seat:
+                            hero_seat = p.seat
                         
-                print(f"{seat_str:4} | {name_str:14} | {stack_str} | {bet_str} | {pos_name:8} | {type_str:10} | {status}")
+                            
+                    print(f"{seat_str:4} | {name_str:14} | {stack_str} | {bet_str} | {pos_name:8} | {type_str:10} | {status}")
 
-            # Calcola equity dell'hero solo quando ci sono i pulsanti sul tavolo
-            if len(table.hero_cards) == 2 and len(active_players_for_equity) >= 2:
-                if len(table.available_actions) > 0 and len(table.hero_cards) == 2:
-                    if len(active_players_for_equity) >= 2:
-                        opponents = [
-                            player for player in active_players_for_equity
-                            if player.seat != table.hero_seat
-                        ]
-
-                        if opponents:
-                            player_hands = [table.hero_cards] + [[] for _ in opponents]
-
-                            player_types = [
-                                PLAYER_TYPES_BY_SEAT.get(table.hero_seat, "loose")
-                            ] + [
-                                player.player_type for player in opponents
+                # Calcola equity dell'hero solo quando ci sono i pulsanti sul tavolo
+                if len(table.hero_cards) == 2 and len(active_players_for_equity) >= 2:
+                    if len(table.available_actions) > 0 and len(table.hero_cards) == 2:
+                        if len(active_players_for_equity) >= 2:
+                            opponents = [
+                                player for player in active_players_for_equity
+                                if player.seat != table.hero_seat
                             ]
 
-                            equities = equity_calc.calculate_equity(
-                                player_hands=player_hands,
-                                board_cards=table.board_cards,
-                                iterations=1000,
-                                player_types=player_types,
+                            if opponents:
+                                player_hands = [table.hero_cards] + [[] for _ in opponents]
+
+                                player_types = [
+                                    PLAYER_TYPES_BY_SEAT.get(table.hero_seat, "loose")
+                                ] + [
+                                    player.player_type for player in opponents
+                                ]
+
+                                equities = equity_calc.calculate_equity(
+                                    player_hands=player_hands,
+                                    board_cards=table.board_cards,
+                                    iterations=1000,
+                                    player_types=player_types,
+                                )
+
+                                hero_equity = equities[0]
+                                print("Hero equity:", hero_equity)
+                            else:
+                                print("Nessun avversario attivo contro cui calcolare equity")           
+
+
+                    old_current_action_labels = current_action_labels
+
+
+                    if not current_action_labels:
+                        last_action_labels = None
+                        last_ollama_decision = None
+                        last_pressed_action_labels = None
+                    elif current_action_labels != last_action_labels:
+                        try:
+                            ollama_prompt = build_ollama_prompt(
+                                table,
+                                hero_equity=hero_equity,
+                                hero_position=hero_position,
+                                big_blind=big_blind,
                             )
+                            send_udp_text(ollama_prompt)
 
-                            hero_equity = equities[0]
-                            print("Hero equity:", hero_equity)
+                            last_ollama_decision = choose_action_with_ollama(
+                                table,
+                                hero_equity=hero_equity,
+                                hero_position=hero_position,
+                                big_blind=big_blind,
+                            )
+                        except Exception as exc:
+                            last_ollama_decision = {
+                                "selected_action": None,
+                                "reason": f"Errore Ollama: {exc}",
+                                "raw_response": "",
+                            }
+                        last_action_labels = current_action_labels
+                        last_sent_action_labels = None
+
+                    if last_ollama_decision is not None:
+                        selected_action = last_ollama_decision.get("selected_action")
+                        selected_label = selected_action.get("label", "") if selected_action else ""
+                        selected_point = selected_action.get("click_point", {}) if selected_action else {}
+                        selected_x = selected_point.get("x")
+                        selected_y = selected_point.get("y")
+
+                        if isinstance(selected_x, (int, float)) and isinstance(selected_y, (int, float)):
+                            selected_x = int(round(selected_x / DISPLAY_SCALE))
+                            selected_y = int(round(selected_y / DISPLAY_SCALE))
+
+                        if selected_action and current_action_labels != last_sent_action_labels:
+                            send_udp_message({
+                                "type": "ollama_decision",
+                                "label": selected_label,
+                                "x": selected_x,
+                                "y": selected_y,
+                                "equity": hero_equity,
+                                "reason": last_ollama_decision.get("reason", ""),
+                                "street": table.street,
+                                "pot": table.pot,
+                                "board_cards": table.board_cards,
+                                "hero_cards": table.hero_cards,
+                            })
+                            last_sent_action_labels = current_action_labels
+
+                        if selected_action:
+                            print(f"{RED_TEXT}Ollama decision: {selected_label} -> ({selected_x}, {selected_y}){RESET_TEXT}")
+
+                            if (
+                                SCRENSHOT_TYPE == SCR_TYPE.ADB
+                                and isinstance(selected_x, int)
+                                and isinstance(selected_y, int)
+                                and current_action_labels != last_pressed_action_labels
+                            ):
+                                try:
+    #                               adb_tap(selected_x, selected_y)
+                                    last_pressed_action_labels = current_action_labels
+                                    print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
+                                except Exception as exc:
+                                    print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
+
+                            wait_press_button =True
                         else:
-                            print("Nessun avversario attivo contro cui calcolare equity")           
+                            print(f"{RED_TEXT}Ollama decision: None{RESET_TEXT}")
+                        print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
 
 
-                old_current_action_labels = current_action_labels
-
-
-                if not current_action_labels:
-                    last_action_labels = None
-                    last_ollama_decision = None
-                    last_pressed_action_labels = None
-                elif current_action_labels != last_action_labels:
-                    try:
-                        ollama_prompt = build_ollama_prompt(
-                            table,
-                            hero_equity=hero_equity,
-                            hero_position=hero_position,
-                            big_blind=big_blind,
-                        )
-                        send_udp_text(ollama_prompt)
-
-                        last_ollama_decision = choose_action_with_ollama(
-                            table,
-                            hero_equity=hero_equity,
-                            hero_position=hero_position,
-                            big_blind=big_blind,
-                        )
-                    except Exception as exc:
-                        last_ollama_decision = {
-                            "selected_action": None,
-                            "reason": f"Errore Ollama: {exc}",
-                            "raw_response": "",
-                        }
-                    last_action_labels = current_action_labels
-                    last_sent_action_labels = None
-
-                if last_ollama_decision is not None:
-                    selected_action = last_ollama_decision.get("selected_action")
-                    selected_label = selected_action.get("label", "") if selected_action else ""
-                    selected_point = selected_action.get("click_point", {}) if selected_action else {}
-                    selected_x = selected_point.get("x")
-                    selected_y = selected_point.get("y")
-
-                    if isinstance(selected_x, (int, float)) and isinstance(selected_y, (int, float)):
-                        selected_x = int(round(selected_x / DISPLAY_SCALE))
-                        selected_y = int(round(selected_y / DISPLAY_SCALE))
-
-                    if selected_action and current_action_labels != last_sent_action_labels:
-                        send_udp_message({
-                            "type": "ollama_decision",
-                            "label": selected_label,
-                            "x": selected_x,
-                            "y": selected_y,
-                            "equity": hero_equity,
-                            "reason": last_ollama_decision.get("reason", ""),
-                            "street": table.street,
-                            "pot": table.pot,
-                            "board_cards": table.board_cards,
-                            "hero_cards": table.hero_cards,
-                        })
-                        last_sent_action_labels = current_action_labels
-
-                    if selected_action:
-                        print(f"{RED_TEXT}Ollama decision: {selected_label} -> ({selected_x}, {selected_y}){RESET_TEXT}")
-
-                        if (
-                            SCRENSHOT_TYPE == SCR_TYPE.ADB
-                            and isinstance(selected_x, int)
-                            and isinstance(selected_y, int)
-                            and current_action_labels != last_pressed_action_labels
-                        ):
-                            try:
-                                adb_tap(selected_x, selected_y)
-                                last_pressed_action_labels = current_action_labels
-                                print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
-                            except Exception as exc:
-                                print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
-
-                        wait_press_button =True
-                    else:
-                        print(f"{RED_TEXT}Ollama decision: None{RESET_TEXT}")
-                    print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
-
-
-            elapsed = time.time() - t0
-            print(f"Elapsed time: {elapsed:.3f}s\n")
+                elapsed = time.time() - t0
+                print(f"Elapsed time: {elapsed:.3f}s\n")
         else: #aspetto che venga premuto il pulsante suggerito da Ollama
             ratio = SequenceMatcher(None, old_current_action_labels, current_action_labels).ratio()
             if ratio < 0.8:
                 wait_press_button = False
                 last_pressed_action_labels = None
+
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()

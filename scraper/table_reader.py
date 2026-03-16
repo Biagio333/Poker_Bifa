@@ -28,10 +28,12 @@ class TableReader:
 
     def read_amount_from_roi(self, ocr_results, roi_name: str) -> float:
         text = self.read_text_from_roi(ocr_results, roi_name)
-        
+        text = text.lower().replace(" ", "")
+        if text == "all-in" or text == "allin":
+            return 9999999
         return parse_amount(text)
 
-    def populate_player(self, player, ocr_results):
+    def populate_player(self, player, ocr_results, can_record_action=True):
         """
         Popola name, stack e puntata corrente di un singolo player.
         Cerca:
@@ -41,27 +43,40 @@ class TableReader:
         """
         seat = player.seat
 
+
         name_roi_name = f"player_{seat}_name"
         stack_roi_name = f"player_{seat}_stack"
         bet_roi_name = f"player_{seat}_bet"
 
         name_text = self.read_text_from_roi(ocr_results, name_roi_name)
-        if name_text:
-            player.set_name(name_text)
-
-        stack_value = self.read_amount_from_roi(ocr_results, stack_roi_name)
-        if stack_value > 0:
-            player.update_stack(stack_value)
 
         bet_value = self.read_amount_from_roi(ocr_results, bet_roi_name)
         player.update_current_bet(bet_value if bet_value > 0 else 0.0)
+
+        stack_value = self.read_amount_from_roi(ocr_results, stack_roi_name)
+        if stack_value > 0:
+            if stack_value == 9999999:
+                stack_value = bet_value
+            player.update_stack(stack_value)
+
+
+
+        if name_text:
+            #player.set_name(name_text, can_record_action=can_record_action)
+            player.set_name(name_text, can_record_action=True)
+
+
 
     def populate_all_players(self, table, ocr_results):
         """
         Popola tutti i player del tavolo.
         """
         for player in table.players:
-            self.populate_player(player, ocr_results)
+            self.populate_player(
+                player,
+                ocr_results,
+                can_record_action=not table.buttons_visible,
+            )
 
     def read_pot(self, ocr_results) -> float:
         """
@@ -197,13 +212,15 @@ class TableReader:
         - pot
         - pulsanti azione
         """
+        # Aggiorna prima i pulsanti: i player usano questo stato per decidere
+        # se registrare o meno azioni OCR nel frame corrente.
+        table.set_available_actions(self.read_action_buttons(ocr_results))
+
         self.populate_all_players(table, ocr_results)
 
         pot_value = self.read_pot(ocr_results)
         if pot_value > 0:
             table.set_pot(pot_value)
-
-        table.set_available_actions(self.read_action_buttons(ocr_results))
 
     def table_reset(self, table):
 
@@ -212,5 +229,7 @@ class TableReader:
             #p.name = None
             p.stack = 0.0
             p.current_bet = 0.0
+            p.new_hand()
+            p.current_street_old = "preflop"
 
         table.reset_hand_state()

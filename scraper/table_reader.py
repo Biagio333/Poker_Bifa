@@ -59,6 +59,7 @@ class TableReader:
         if stack_value > 0:
             if stack_value == 9999999:
                 stack_value = bet_value
+                player.is_all_in = True
             player.update_stack(stack_value)
 
 

@@ -29,7 +29,7 @@ class SCR_TYPE(Enum):
 SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
 SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
-DISPLAY_SCALE = 0.4
+DISPLAY_SCALE = 1
 DISPLAY_PREVIEW = False
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
@@ -104,7 +104,7 @@ def main():
     server.start()
 
     roi_map = ROIMap("data/Poker_star.json")
-    roi_map.load()
+    roi_map.load(DISPLAY_SCALE/0.4)  # le ROI sono state disegnate su screenshot al 40%, quindi scalano di conseguenza
 
     # Inizializza image_search e carica le immagini
     img_search = image_search(roi_map, "Poker_star")

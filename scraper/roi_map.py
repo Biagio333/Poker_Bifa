@@ -13,13 +13,25 @@ class ROIMap:
         self.json_path = json_path
         self.data = {}
 
-    def load(self):
+    @staticmethod
+    def _scale_roi(roi: dict, scale_factor: float):
+        return {
+            "x": int(round(roi["x"] * scale_factor)),
+            "y": int(round(roi["y"] * scale_factor)),
+            "w": int(round(roi["w"] * scale_factor)),
+            "h": int(round(roi["h"] * scale_factor)),
+        }
+
+    def load(self, scale_factor: float = 1.0):
         with open(self.json_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
         # Caso 1: file già convertito
         if "shapes" not in raw:
-            self.data = raw
+            self.data = {
+                name: self._scale_roi(roi, scale_factor)
+                for name, roi in raw.items()
+            }
             return
 
         # Caso 2: file Labelme
@@ -35,10 +47,10 @@ class ROIMap:
             x1, y1 = points[0]
             x2, y2 = points[1]
 
-            x = int(min(x1, x2))
-            y = int(min(y1, y2))
-            w = int(abs(x2 - x1))
-            h = int(abs(y2 - y1))
+            x = int(round(min(x1, x2) * scale_factor))
+            y = int(round(min(y1, y2) * scale_factor))
+            w = int(round(abs(x2 - x1) * scale_factor))
+            h = int(round(abs(y2 - y1) * scale_factor))
 
             converted[label] = {
                 "x": x,

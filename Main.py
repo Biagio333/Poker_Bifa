@@ -187,8 +187,10 @@ def main():
             if key == ord("q"):
                 break
 
-        server.update_frame(img)
+
         ocr_results, ocr_time = ocr.run_ocr(img)
+        img_populated = ocr.draw_results (img, ocr_results, 0)  # disegna solo i risultati OCR senza testo per debug
+        server.update_frame(img_populated)
         #reader.table_reset(table)
 
         # Cerca le carte sul tavolo
@@ -209,9 +211,10 @@ def main():
         if len( table.hero_cards ) == 2:
             if table.hero_cards != table_hero_cards_old:
                 table_hero_cards_old = list(table.hero_cards)
-                for street in table.actions_by_street:
-                    if street != "preflop":  # voglio mantenere le azioni OCR del preflop anche quando cambia la mano, perche a volte non riesce a leggerle bene e mi serve un po di memoria
-                        table.actions_by_street[street].clear()
+                for player in table.players:
+                    for street in player.actions_by_street:
+                        if street != "preflop":  # voglio mantenere le azioni OCR del preflop anche quando cambia la mano, perche a volte non riesce a leggerle bene e mi serve un po di memoria
+                            player.actions_by_street[street].clear()
 
 
         reader.populate_table(table, ocr_results)

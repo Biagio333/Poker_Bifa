@@ -48,6 +48,8 @@ class TableReader:
         stack_roi_name = f"player_{seat}_stack"
         bet_roi_name = f"player_{seat}_bet"
 
+
+
         name_text = self.read_text_from_roi(ocr_results, name_roi_name)
 
         bet_value = self.read_amount_from_roi(ocr_results, bet_roi_name)

@@ -204,6 +204,8 @@ class Player:
         if action == "check" or action == "fold":
             amount = 0.0
             self.amount_old = 0.0  # reset amount_old per check/fold, non vogliamo che influenzi le azioni future
+
+
             
         if self.current_street_old != street:
             self.current_street_old = street
@@ -213,23 +215,30 @@ class Player:
         if self.counter_new_insert > 0:
             self.counter_new_insert -= 1
             return
-        self.counter_new_insert = 1
+        self.counter_new_insert = 2
         
         
 
-
+        calculed_amount = amount - self.amount_old
         event = {
             "street": street,
             "action": action,
-            "amount": amount-self.amount_old
+            "amount": calculed_amount
         }
+
+        if action == "call" or action == "raise" or action == "bet":
+            if calculed_amount == 0.0:
+                self.amount_old = amount
+                return
+
         self.amount_old = amount
         self.actions.append(event)
         self.actions_by_street[street].append(event)
         
 
         if amount > 0:
-            self.total_invested += amount
+            self.total_invested += calculed_amount
+
 
         if action == "fold":
             self.in_hand = False

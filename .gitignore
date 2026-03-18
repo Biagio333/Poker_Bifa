@@ -56,3 +56,5 @@ Thumbs.db
 
 # SQLite database (se usi test locali)
 *.sqlite3
+
+immage/

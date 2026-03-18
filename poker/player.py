@@ -15,6 +15,16 @@ class Player:
     - statistiche base
     """
 
+    DEFAULT_STATS = {
+        "hands_seen": 0,
+        "vpip": 0,
+        "pfr": 0,
+        "bet": 0,
+        "raise": 0,
+        "call": 0,
+        "fold": 0,
+    }
+
     def __init__(self, seat: int):
         self.seat = seat
         self.name = None
@@ -28,13 +38,14 @@ class Player:
         self.total_invested = 0.0
         self.total_hands = 0
         self.current_street = "preflop"
-        self.current_street_old = "preflop"
+        self.current_street_old_frame = "preflop"
+
 
         self.amount_old = 0.0
         self.counter_new_insert = 0
 
         self.request_reset_hand = False
-
+        self.action_old = None
         self.actions = []
         self.ocr_actions = []
         self.actions_by_street = {
@@ -44,15 +55,148 @@ class Player:
             "river": []
         }
 
-        self.stats = {
-            "hands_seen": 0,
-            "vpip": 0,
-            "pfr": 0,
-            "bet": 0,
-            "raise": 0,
-            "call": 0,
-            "fold": 0
-        }
+        self.stats = self.DEFAULT_STATS.copy()
+        self._stats_profile_name = None
+        self._stats_dirty = False
+        self._reset_hand_stat_flags()
+
+    def _reset_hand_stat_flags(self):
+        self._hand_seen_recorded = False
+        self._hand_vpip_recorded = False
+        self._hand_pfr_recorded = False
+        self._hand_bet_recorded = False
+        self._hand_raise_recorded = False
+        self._hand_call_recorded = False
+        self._hand_fold_recorded = False
+
+    def _increment_stat_once_per_hand(self, stat_name: str, flag_name: str):
+        if getattr(self, flag_name):
+            return
+        self.stats[stat_name] += 1
+        setattr(self, flag_name, True)
+        self._stats_dirty = True
+
+    def observe_current_hand(self):
+        if self._hand_seen_recorded:
+            return
+        self.total_hands += 1
+        self.stats["hands_seen"] += 1
+        self._hand_seen_recorded = True
+        self._stats_dirty = True
+
+    def get_stats_profile_name(self):
+        return self._stats_profile_name
+
+    def needs_stats_load(self):
+        normalized_name = (self.name or "").strip()
+        return bool(normalized_name) and normalized_name != self._stats_profile_name
+
+    def has_dirty_stats(self):
+        return self._stats_dirty
+
+    def mark_stats_saved(self):
+        self._stats_dirty = False
+
+    def export_stats(self):
+        return self.stats.copy()
+
+    def load_stats(self, stats: dict, profile_name: str):
+        current_session_stats = self.stats.copy() if self._stats_profile_name is None else self.DEFAULT_STATS.copy()
+
+        loaded_stats = self.DEFAULT_STATS.copy()
+        for key in loaded_stats:
+            loaded_stats[key] = int(stats.get(key, 0))
+
+        self.stats = loaded_stats
+        self.total_hands = self.stats["hands_seen"]
+        self._stats_profile_name = profile_name
+        self._stats_dirty = False
+
+        for key, value in current_session_stats.items():
+            if value:
+                self.stats[key] += int(value)
+
+        self.total_hands = self.stats["hands_seen"]
+        if any(current_session_stats.values()):
+            self._stats_dirty = True
+
+    def get_stat_percentage(self, stat_name: str) -> float:
+        hands_seen = self.stats.get("hands_seen", 0)
+        if hands_seen <= 0:
+            return 0.0
+        return (self.stats.get(stat_name, 0) / hands_seen) * 100.0
+
+    def classify_player(self) -> str:
+        hands = self.stats.get("hands_seen", 0)
+        vpip = self.stats.get("vpip", 0)
+        pfr = self.stats.get("pfr", 0)
+        call = self.stats.get("call", 0)
+        bet = self.stats.get("bet", 0)
+        raise_ = self.stats.get("raise", 0)
+
+        if hands < 10:
+            self.player_type = "unknown"
+            return self.player_type
+
+        vpip_pct = vpip / hands
+        pfr_pct = pfr / hands
+
+        # Aggression factor
+        calls = max(call, 1)
+        aggression = (bet + raise_) / calls
+
+        # ------------------------------------------------
+        # MANIAC
+        # ------------------------------------------------
+        if vpip_pct > 0.40 and pfr_pct > 0.30 and aggression >= 2:
+            self.player_type = "maniac"
+            return self.player_type
+
+        # ------------------------------------------------
+        # LAG (loose aggressive)
+        # ------------------------------------------------
+        if vpip_pct > 0.30 and pfr_pct > 0.20 and aggression >= 1:
+            self.player_type = "lag"
+            return self.player_type
+
+        # ------------------------------------------------
+        # TAG (tight aggressive)
+        # ------------------------------------------------
+        if 0.15 <= vpip_pct <= 0.25 and pfr_pct >= 0.12 and aggression >= 1:
+            self.player_type = "tag"
+            return self.player_type
+
+        # ------------------------------------------------
+        # NIT
+        # ------------------------------------------------
+        if vpip_pct < 0.15 and pfr_pct < 0.10:
+            self.player_type = "nit"
+            return self.player_type
+
+        # ------------------------------------------------
+        # CALLING STATION
+        # ------------------------------------------------
+        if vpip_pct > 0.30 and pfr_pct < 0.10 and aggression < 1:
+            self.player_type = "calling_station"
+            return self.player_type
+
+        # ------------------------------------------------
+        # PASSIVE FISH
+        # ------------------------------------------------
+        if vpip_pct > 0.25 and aggression < 0.7:
+            self.player_type = "passive_fish"
+            return self.player_type
+
+        # ------------------------------------------------
+        # LOOSE GENERICO
+        # ------------------------------------------------
+        if vpip_pct > 0.25:
+            self.player_type = "loose"
+            return self.player_type
+
+        # Default
+        self.player_type = "tag"
+        return self.player_type
 
     def set_name(self, name: str, *, can_record_action: bool = True):
         normalized = (name or "").strip()
@@ -60,7 +204,13 @@ class Player:
             return
 
         action_data = self._extract_action_from_text(normalized)
+
         if action_data is not None:
+            # fronte salita azione (prende solo il primo)
+            if self.action_old == action_data["action"]:
+                    return None
+            self.action_old = action_data["action"]
+
             self.register_ocr_action(
                 action_data["action"],
                 raw_text=normalized,
@@ -69,6 +219,7 @@ class Player:
             )
             self.counter_new_insert = 0
             return
+
 
         previous_name = (self.name or "").strip() if self.name else ""
         if previous_name and normalized != previous_name :
@@ -93,6 +244,8 @@ class Player:
         return SequenceMatcher(None, a, b).ratio()
 
     def _extract_action_from_text(self, text: str):
+        if self.request_reset_hand==True:
+            return None
         lowered = (text or "").strip().lower()
         compact = lowered.replace("-", " ")
 
@@ -114,6 +267,8 @@ class Player:
             "raise": "raise",
             "all-in": "allin",
             "all in": "allin",
+            "Muck": "fold",
+            "muck": "fold",
         }
 
         detected_action = None
@@ -124,8 +279,11 @@ class Player:
                 break
 
         if detected_action is None:
+            self.action_old = None
             return None
+        
 
+        
         amount_match = re.search(r"\d+(?:[\.,]\d+)?", compact)
         amount = self.current_bet 
         if amount_match:
@@ -141,7 +299,7 @@ class Player:
         })
         # Registra in actions_by_street solo quando consentito dal chiamante.
         if record_in_street:
-            self.add_action(self.current_street, action, amount)
+            self.add_action(self.current_street_old_frame, action, amount)
 
     def get_ocr_actions(self):
         return self.ocr_actions
@@ -170,12 +328,13 @@ class Player:
         self.current_bet = 0.0
         self.amount_old = 0.0
         self.current_street = "preflop"
-        self.current_street_old = ""
+
         self.actions.clear()
         self.ocr_actions.clear()
 
         for street in self.actions_by_street:
             self.actions_by_street[street].clear()
+        self._reset_hand_stat_flags()
 
 
 
@@ -194,24 +353,17 @@ class Player:
 
         amount = round(amount, 2 )# Evita di registrare azioni duplicate con stesso tipo e importo
 
-        if self.actions_by_street[street]:
-            last = self.actions_by_street[street][-1]
-            same_action = last.get("action") == action
-            same_amount = abs(float(last.get("amount", 0.0)) - float(amount)) < 1e-6
-            if same_action and same_amount:
-                return
-        
         if action == "check" or action == "fold":
             amount = 0.0
             self.amount_old = 0.0  # reset amount_old per check/fold, non vogliamo che influenzi le azioni future
 
-
-            
-        if self.current_street_old != street:
-            self.current_street_old = street
-            self.amount_old = 0.0
-
-
+        #if self.actions_by_street[street]:
+        #    last = self.actions_by_street[street][-1]
+        #    same_action = last.get("action") == action
+        #    same_amount = abs(float(last.get("amount", 0.0)) - float(amount)) < 1e-6
+        #    if same_action and same_amount:
+        #        return
+        
         if self.counter_new_insert > 0:
             self.counter_new_insert -= 1
             return
@@ -239,27 +391,25 @@ class Player:
         if amount > 0:
             self.total_invested += calculed_amount
 
+        self.observe_current_hand()
 
         if action == "fold":
             self.in_hand = False
-            self.stats["fold"] += 1
+            self._increment_stat_once_per_hand("fold", "_hand_fold_recorded")
 
         elif action == "call":
-            self.stats["call"] += 1
+            self._increment_stat_once_per_hand("call", "_hand_call_recorded")
             if street == "preflop":
-                self.stats["vpip"] += 1
+                self._increment_stat_once_per_hand("vpip", "_hand_vpip_recorded")
 
         elif action == "bet":
-            self.stats["bet"] += 1
+            self._increment_stat_once_per_hand("bet", "_hand_bet_recorded")
 
         elif action == "raise":
-            self.stats["raise"] += 1
+            self._increment_stat_once_per_hand("raise", "_hand_raise_recorded")
             if street == "preflop":
-                self.stats["vpip"] += 1
-                self.stats["pfr"] += 1
-        
-        self.total_hands += 1
-        self.stats["hands_seen"] += 1
+                self._increment_stat_once_per_hand("vpip", "_hand_vpip_recorded")
+                self._increment_stat_once_per_hand("pfr", "_hand_pfr_recorded")
 
     def get_actions(self):
         return self.actions

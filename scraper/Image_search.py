@@ -4,13 +4,14 @@ import os
 
 
 class image_search:
-    def __init__(self, roi_map, name_table="default"):
+    def __init__(self, roi_map, name_table="default",scale_factor=0.8):
       
         self.roi_map = roi_map
         self.card_table_img = None
         self.card_hero_img = None
         self.covered_card_img = None
         self.dealer_button_img = None
+        self.scale_factor = scale_factor
     
     def load_images(self, path_images):
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +24,7 @@ class image_search:
                 card_path = os.path.join(cards_board_path, card_file)
                 img = cv2.imread(card_path)
                 if img is not None and img.size > 0:
-                    img = cv2.resize(img, None, fx=0.4, fy=0.4)  # Ingrandisci di 1.2
+                    img = cv2.resize(img, None, fx=self.scale_factor, fy=self.scale_factor)  # Ingrandisci di scale_factor
                     card_name = os.path.splitext(card_file)[0]  # Rimuovi estensione
                     cards_board_images.append([img, card_name])
                 else:

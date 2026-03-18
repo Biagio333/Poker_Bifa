@@ -26,7 +26,7 @@ class Table:
         self.board_cards = []
         self.hero_cards = []
         self.street = "preflop"
-        self.street_old = "preflop"
+
         self.available_actions = []
         self.buttons_visible = False
         self._prev_board_len = 0
@@ -40,9 +40,12 @@ class Table:
     def set_board_cards(self, cards):
         new_cards = list(cards or [])
         self.board_cards = new_cards
-        self.street = self.street_old  #rimango dietro di un frame perche sbagliava a volte
+        
+        street_new = self._street_from_board()
         for p in self.players:
-            p.current_street = self.street
+            p.current_street_old_frame = self.street
+            p.current_street = street_new
+        self.street = street_new
         # Nuova mano: il board era popolato e ora è vuoto → reset azioni per street
         if self._prev_board_len > 0 and len(new_cards) == 0:
             for p in self.players:
@@ -50,7 +53,7 @@ class Table:
                     p.actions_by_street[street].clear()
                 p.actions.clear()
         
-        self.street_old = self._street_from_board()
+
         self._prev_board_len = len(new_cards)
 
 
@@ -63,7 +66,7 @@ class Table:
         self.board_cards.clear()
         self.hero_cards.clear()
         self.street = "preflop"
-        self.street_old = "preflop"
+
         self.available_actions.clear()
         self.buttons_visible = False
 
@@ -100,18 +103,18 @@ class Table:
 
     def format_players_stats(self):
         streets = ("preflop", "flop", "turn", "river")
-        term_width = shutil.get_terminal_size(fallback=(160, 40)).columns
+        term_width = shutil.get_terminal_size(fallback=(160, 40)).columns-55
 
         stat_columns = [
             ("Seat", 4, ">"),
             ("Name", 14, "<"),
             ("Hands", 5, ">"),
-            ("VPIP", 4, ">"),
-            ("PFR", 4, ">"),
-            ("Call", 4, ">"),
-            ("Bet", 3, ">"),
-            ("Raise", 5, ">"),
-            ("Fold", 4, ">"),
+            ("VPIP", 6, ">"),
+            ("PFR", 6, ">"),
+            ("Call", 6, ">"),
+            ("Bet", 6, ">"),
+            ("Raise", 6, ">"),
+            ("Fold", 6, ">"),
             ("Invested", 8, ">"),
         ]
 
@@ -152,17 +155,16 @@ class Table:
         lines = [sep, header, sep]
 
         for p in self.players:
-            s = p.stats
             base_cells = [
                 str(p.seat),
                 truncate(p.name or "???", 14),
                 str(p.get_total_hands()),
-                str(s["vpip"]),
-                str(s["pfr"]),
-                str(s["call"]),
-                str(s["bet"]),
-                str(s["raise"]),
-                str(s["fold"]),
+                f"{p.get_stat_percentage('vpip'):.1f}%",
+                f"{p.get_stat_percentage('pfr'):.1f}%",
+                f"{p.get_stat_percentage('call'):.1f}%",
+                f"{p.get_stat_percentage('bet'):.1f}%",
+                f"{p.get_stat_percentage('raise'):.1f}%",
+                f"{p.get_stat_percentage('fold'):.1f}%",
                 f"{p.total_invested:.2f}",
             ]
             street_cells = [fmt_acts(p.actions_by_street.get(st, [])) for st in streets]

@@ -69,17 +69,29 @@ class TableReader:
             player.set_name(name_text, can_record_action=True)
 
 
+        if player.name or stack_value > 0 or bet_value > 0:
+            player.observe_current_hand()
+
+
 
     def populate_all_players(self, table, ocr_results):
         """
         Popola tutti i player del tavolo.
         """
+        copy_request = False
         for player in table.players:
             self.populate_player(
                 player,
                 ocr_results,
                 can_record_action=not table.buttons_visible,
             )
+
+            if player.request_reset_hand==True:
+                copy_request = True
+        
+        if copy_request:
+            for player in table.players:
+                player.request_reset_hand = True
 
     def read_pot(self, ocr_results) -> float:
         """
@@ -233,6 +245,6 @@ class TableReader:
             p.stack = 0.0
             p.current_bet = 0.0
             p.new_hand()
-            p.current_street_old = "preflop"
+
 
         table.reset_hand_state()

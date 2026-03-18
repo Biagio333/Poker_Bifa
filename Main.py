@@ -14,6 +14,7 @@ from poker.equity_calculator import PokerEquityCalculator
 from poker.debug_mjpeg import MJPEGDebugServer
 from poker.ollama_advisor import build_ollama_prompt, choose_action_with_ollama
 from poker.table import Table
+from poker.stats_db import PlayerStatsDB
 from poker.udp_sender import send_udp_message, send_udp_text
 import time
 from enum import Enum
@@ -31,6 +32,7 @@ SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
 DISPLAY_SCALE = 0.8
 DISPLAY_PREVIEW = False
+PLAYER_STATS_DB_PATH = "data/player_stats.db"
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
 
@@ -107,8 +109,8 @@ def main():
     roi_map.load(DISPLAY_SCALE/0.4)  # le ROI sono state disegnate su screenshot al 40%, quindi scalano di conseguenza
 
     # Inizializza image_search e carica le immagini
-    img_search = image_search(roi_map, "Poker_star")
-    img_search.load_images("Poker_star")
+    img_search = image_search(roi_map, "Poker_star", scale_factor=DISPLAY_SCALE)
+    img_search.load_images("Poker_star")  # le immagini sono state disegnate su screenshot al 40%, quindi scalano di conseguenza
 
     # Inizializza equity calculator
     equity_calc = PokerEquityCalculator()
@@ -124,6 +126,7 @@ def main():
     reader = TableReader(roi_map, min_score=0.5)
 
     table = Table(max_players=6, hero_seat=0)
+    stats_db = PlayerStatsDB(PLAYER_STATS_DB_PATH)
 
     count = -1
     last_id = -1
@@ -201,23 +204,33 @@ def main():
         table.set_board_cards(carte_trovate)
         street_for_ocr_actions = table.street
 
-        for p in table.players:         #resetto un tavolo se richiesto 
-            
-            if p.request_reset_hand:
-
-                p.request_reset_hand = False
-                reader.table_reset(table)  
-        
+      
         if len( table.hero_cards ) == 2:
             if table.hero_cards != table_hero_cards_old:
                 table_hero_cards_old = list(table.hero_cards)
                 for player in table.players:
+                    player.request_reset_hand = False
                     for street in player.actions_by_street:
                         if street != "preflop":  # voglio mantenere le azioni OCR del preflop anche quando cambia la mano, perche a volte non riesce a leggerle bene e mi serve un po di memoria
                             player.actions_by_street[street].clear()
-
+                reader.table_reset(table) 
 
         reader.populate_table(table, ocr_results)
+
+        for player in table.players:
+            loaded_profile_name = player.get_stats_profile_name()
+            if player.has_dirty_stats() and loaded_profile_name:
+                stats_db.save_player(loaded_profile_name, player.export_stats())
+                if loaded_profile_name == (player.name or "").strip():
+                    player.mark_stats_saved()
+
+            if player.needs_stats_load():
+                stats_db_stats = stats_db.load_player(player.name)
+                player.load_stats(stats_db_stats, (player.name or "").strip())
+
+            if player.has_dirty_stats() and player.get_stats_profile_name():
+                stats_db.save_player(player.get_stats_profile_name(), player.export_stats())
+                player.mark_stats_saved()
 
         current_action_labels = tuple(
                     action.get("label", "").strip().lower()

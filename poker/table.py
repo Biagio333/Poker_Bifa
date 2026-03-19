@@ -101,12 +101,14 @@ class Table:
 
         return "\n".join(lines)
 
-    def format_players_stats(self):
+    def format_players_stats(self, seat_to_position=None):
         streets = ("preflop", "flop", "turn", "river")
         term_width = shutil.get_terminal_size(fallback=(160, 40)).columns-55
+        seat_to_position = seat_to_position or {}
 
         stat_columns = [
             ("Seat", 4, ">"),
+            ("Pos", 4, "<"),
             ("Name", 14, "<"),
             ("Hands", 5, ">"),
             ("VPIP", 6, ">"),
@@ -157,6 +159,7 @@ class Table:
         for p in self.players:
             base_cells = [
                 str(p.seat),
+                seat_to_position.get(p.seat, "-"),
                 truncate(p.name or "???", 14),
                 str(p.get_total_hands()),
                 f"{p.get_stat_percentage('vpip'):.1f}%",

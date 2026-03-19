@@ -236,11 +236,11 @@ def main():
                     action.get("label", "").strip().lower()
                     for action in table.available_actions
                 )
-        
+        dealer = img_search.find_dealer_button(img,threshold=0.6)
+        posizioni = img_search.get_player_positions(dealer)
+        seat_to_pos = {seat: pos for pos, seat in posizioni.items()}
 
-
-
-        print(table.format_players_stats())
+        print(table.format_players_stats(seat_to_pos))
 
         #se ho gia preso un azione aspetto che spariscano i pulsanti per continuare
         if wait_press_button == False:
@@ -252,10 +252,6 @@ def main():
             carte_hero = [card[0].upper() + card[1] for card in carte_hero]
             print(f"Carte hero: {carte_hero}")
 
-            # Cerca il dealer button
-            dealer = img_search.find_dealer_button(img,threshold=0.7)
-            #print(f"Dealer button seat: {dealer}")
-
             # Cerca carte coperte per identificare giocatori attivi nella mano
             # Per testare diverse soglie, decommenta la riga sotto:
             # img_search.test_covered_cards_threshold(img)
@@ -263,14 +259,7 @@ def main():
             active_seats = img_search.find_covered_cards(img, threshold=0.8)
             #print(f"Giocatori con carte coperte (in mano): {active_seats}")
 
-
-            # Calcola le posizioni dei giocatori
-            posizioni = img_search.get_player_positions(dealer)
-            
-
-            
             # Crea un dizionario inverso per lookup veloce
-            seat_to_pos = {seat: pos for pos, seat in posizioni.items()}
             hero_position = seat_to_pos.get(table.hero_seat)
             big_blind_seat = posizioni.get("BB")
             big_blind = None
@@ -288,7 +277,7 @@ def main():
             
 
             old_current_action_labels = None
-            if table.available_actions and False:
+            if table.available_actions and True:
                
                 print(table.format_available_actions(DISPLAY_SCALE))
 

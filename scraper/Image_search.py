@@ -62,7 +62,7 @@ class image_search:
                 card_path = os.path.join(dealer_button_path, card_file)
                 img = cv2.imread(card_path)
                 if img is not None and img.size > 0:
-                    img = cv2.resize(img, None, fx=0.4, fy=0.4)  # Scala a 0.4 come le altre immagini
+                    img = cv2.resize(img, None, fx=self.scale_factor, fy=self.scale_factor)  # Scala a 0.4 come le altre immagini
                     card_name = os.path.splitext(card_file)[0]  # Rimuovi estensione
                     dealer_button_images.append([img, card_name])
                 else:

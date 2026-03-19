@@ -191,8 +191,11 @@ def main():
             if key == ord("q"):
                 break
 
-
+        t0 = time.time()
         ocr_results, ocr_time = ocr.run_ocr(img)
+        elapsed_ocr = time.time() - t0
+
+
         img_populated = ocr.draw_results (img, ocr_results, 0)  # disegna solo i risultati OCR senza testo per debug
         server.update_frame(img_populated)
         #reader.table_reset(table)
@@ -242,6 +245,9 @@ def main():
         seat_to_pos = {seat: pos for pos, seat in posizioni.items()}
 
         print(table.format_players_stats(seat_to_pos))
+
+        elapsed = time.time() - t0
+        print(f"Elapsed time: {elapsed:.3f}         {elapsed_ocr:.3f} s\n")
 
         #se ho gia preso un azione aspetto che spariscano i pulsanti per continuare
         if wait_press_button == False:
@@ -375,8 +381,8 @@ def main():
                         print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
 
 
-                    elapsed = time.time() - t0
-                    print(f"Elapsed time: {elapsed:.3f}s\n")
+                elapsed = time.time() - t0
+                print(f"Elapsed time: {elapsed:.3f}s\n")
         else: #aspetto che venga premuto il pulsante suggerito da Ollama
             ratio = SequenceMatcher(None, old_current_action_labels, current_action_labels).ratio()
             if ratio < 0.8:

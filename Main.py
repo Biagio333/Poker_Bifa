@@ -381,8 +381,10 @@ def main():
                         print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
 
 
-                elapsed = time.time() - t0
-                print(f"Elapsed time: {elapsed:.3f}s\n")
+                    elapsed = time.time() - t0
+                    print(f"Elapsed time: {elapsed:.3f}s\n")
+                    elapsed = time.time() - t0
+                    print(f"Elapsed time: {elapsed:.3f}         {elapsed_ocr:.3f} s\n")
         else: #aspetto che venga premuto il pulsante suggerito da Ollama
             ratio = SequenceMatcher(None, old_current_action_labels, current_action_labels).ratio()
             if ratio < 0.8:

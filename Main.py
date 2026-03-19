@@ -134,6 +134,7 @@ def main():
     last_ollama_decision = None
     last_sent_action_labels = None
     last_pressed_action_labels = None
+    old_current_action_labels = None
     wait_press_button = False
     street_for_ocr_actions = "preflop"
 
@@ -271,84 +272,28 @@ def main():
             table.set_hero_cards(carte_hero)
 
             print(f"\nMano corrente: {table.street} | Pot: {table.pot:.2f} | Board: {table.board_cards} | Hero: {table.hero_cards}")
-            act = table.format_available_actions(DISPLAY_SCALE)
+            act, select_amount_buttons = table.format_available_actions(DISPLAY_SCALE)
 
+            if table.available_actions:
+                print,f"Azioni disponibili: {act}"
+                if select_amount_buttons:
+                    print(f"Pulsanti di selezione importo disponibili: {[btn.get('label', '') for btn in select_amount_buttons]}")
+
+            if len (table.available_actions)==0:
+                old_current_action_labels =None
 
             
+            if table.available_actions and  select_amount_buttons and current_action_labels != old_current_action_labels:
 
-            old_current_action_labels = None
-            if table.available_actions and True:
-               
-                print(table.format_available_actions(DISPLAY_SCALE))
-
-                print("\nGiocatori:")
-                print("Seat | Name           | Stack  | Bet    | Position | Type       | Status")
-                print("-----|----------------|--------|--------|----------|------------|--------")
-                
-                # Identifica giocatori attivi (da carte coperte) e hero
-                hero_seat = None
-                active_players_for_equity = []
-                hero_equity = None
-                for p in table.players:
-
-                    p.set_player_type(PLAYER_TYPES_BY_SEAT.get(p.seat, "loose"))
-                    pos_name = seat_to_pos.get(p.seat, "???") if p.seat is not None else "???"
-                    name_str = p.name[:14] if p.name else "???"
-                    stack_str = f"{p.stack:6.2f}" if p.stack is not None else "  ???"
-                    bet_str = f"{p.current_bet:6.2f}" if p.current_bet is not None else "  ???"
-                    seat_str = p.seat if p.seat is not None else "?"
-                    type_str = p.player_type[:10]
-                    
-                    # Determina status basato su carte coperte
-                    status = ""
-                    is_active = p.seat in active_seats if p.seat is not None else False
-                    
-                                    # Log specifico per seat 0
-                    status = "FOLDED"
-                    is_active = p.seat in active_seats if p.seat is not None else False
-
-                    if p.seat == table.hero_seat and len(table.hero_cards) == 2:
-                        is_active = True
-
-                    if is_active:
-                        status = "IN HAND"
-                        active_players_for_equity.append(p)
-                        if p.seat == table.hero_seat:
-                            hero_seat = p.seat
-                        
-                            
-                    print(f"{seat_str:4} | {name_str:14} | {stack_str} | {bet_str} | {pos_name:8} | {type_str:10} | {status}")
-
-                # Calcola equity dell'hero solo quando ci sono i pulsanti sul tavolo
-                if len(table.hero_cards) == 2 and len(active_players_for_equity) >= 2:
-                    if len(table.available_actions) > 0 and len(table.hero_cards) == 2:
-                        if len(active_players_for_equity) >= 2:
-                            opponents = [
-                                player for player in active_players_for_equity
-                                if player.seat != table.hero_seat
-                            ]
-
-                            if opponents:
-                                player_hands = [table.hero_cards] + [[] for _ in opponents]
-
-                                player_types = [
-                                    PLAYER_TYPES_BY_SEAT.get(table.hero_seat, "loose")
-                                ] + [
-                                    player.player_type for player in opponents
-                                ]
-
-                                equities = equity_calc.calculate_equity(
-                                    player_hands=player_hands,
-                                    board_cards=table.board_cards,
-                                    iterations=1000,
-                                    player_types=player_types,
-                                )
-
-                                hero_equity = equities[0]
-                                print("Hero equity:", hero_equity)
-                            else:
-                                print("Nessun avversario attivo contro cui calcolare equity")           
-
+                    equity_result = equity_calc.calculate_table_equity(
+                        table,
+                        seat_to_position=seat_to_pos,
+                        active_seats=active_seats,
+                        iterations=1000,
+                    )
+                    hero_equity = equity_result["hero_equity"]
+                    if hero_equity is not None:
+                        print("Hero equity:", hero_equity)
 
                     old_current_action_labels = current_action_labels
 
@@ -430,8 +375,8 @@ def main():
                         print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
 
 
-                elapsed = time.time() - t0
-                print(f"Elapsed time: {elapsed:.3f}s\n")
+                    elapsed = time.time() - t0
+                    print(f"Elapsed time: {elapsed:.3f}s\n")
         else: #aspetto che venga premuto il pulsante suggerito da Ollama
             ratio = SequenceMatcher(None, old_current_action_labels, current_action_labels).ratio()
             if ratio < 0.8:

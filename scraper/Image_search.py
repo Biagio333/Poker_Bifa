@@ -72,7 +72,7 @@ class image_search:
         print(f"Caricate {len(cards_board_images)} immagini board, {len(cards_hero_images)} hero (da board ingrandite), {len(covered_card_images)} covered, {len(dealer_button_images)} dealer")
         return cards_board_images, cards_hero_images, covered_card_images, dealer_button_images
 
-    def find_table_cards(self, table_img, threshold=0.88):
+    def find_table_cards(self, table_img, threshold=0.95):
         """
         Cerca le carte nel ROI 'carte_tavolo' usando template matching con NMS.
         
@@ -122,7 +122,7 @@ class image_search:
         
         return found_cards
 
-    def find_hero_cards(self, table_img, threshold=0.9):
+    def find_hero_cards(self, table_img, threshold=0.95):
         """
         Cerca le carte hero nel ROI 'carte_hero' usando template matching con NMS.
         

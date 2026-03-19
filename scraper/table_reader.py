@@ -220,6 +220,22 @@ class TableReader:
 
         return action_buttons
 
+    def read_amount_buttons(self, ocr_results):
+        amount_buttons = []
+        button_rois = self.roi_map.get_by_prefix("select_amount")
+
+        for roi_name, roi in sorted(button_rois.items()):
+            roi_items = ocr_in_roi(ocr_results, roi, self.min_score)
+            if not roi_items:
+                continue
+
+            for cluster in self._cluster_button_items(roi_items):
+                parsed_button = self._parse_action_cluster(cluster, roi_name)
+                if parsed_button is not None:
+                    amount_buttons.append(parsed_button)
+
+        return amount_buttons
+
     def populate_table(self, table, ocr_results):
         """
         Popola tutto il tavolo:
@@ -230,6 +246,7 @@ class TableReader:
         # Aggiorna prima i pulsanti: i player usano questo stato per decidere
         # se registrare o meno azioni OCR nel frame corrente.
         table.set_available_actions(self.read_action_buttons(ocr_results))
+        table.set_avaible_button(self.read_amount_buttons(ocr_results))
 
         self.populate_all_players(table, ocr_results)
 

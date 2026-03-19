@@ -22,7 +22,29 @@ class Player:
         "bet": 0,
         "raise": 0,
         "call": 0,
+        "check": 0,
         "fold": 0,
+        "bet_flop": 0,
+        "bet_turn": 0,
+        "bet_river": 0,
+        "raise_flop": 0,
+        "raise_turn": 0,
+        "raise_river": 0,
+        "call_flop": 0,
+        "call_turn": 0,
+        "call_river": 0,
+        "check_flop": 0,
+        "check_turn": 0,
+        "check_river": 0,
+        "fold_flop": 0,
+        "fold_turn": 0,
+        "fold_river": 0,
+        "three_bet_count": 0,
+        "three_bet_opp": 0,
+        "fold_to_cbet_count": 0,
+        "fold_to_cbet_opp": 0,
+        "fold_to_raise_count": 0,
+        "fold_to_raise_opp": 0,
     }
 
     def __init__(self, seat: int):
@@ -67,13 +89,34 @@ class Player:
         self._hand_bet_recorded = False
         self._hand_raise_recorded = False
         self._hand_call_recorded = False
+        self._hand_check_recorded = False
         self._hand_fold_recorded = False
+        self._street_action_stat_flags = set()
+        self._hand_three_bet_opp_recorded = False
+        self._hand_three_bet_count_recorded = False
+        self._hand_fold_to_cbet_opp_recorded = False
+        self._hand_fold_to_cbet_count_recorded = False
+        self._hand_fold_to_raise_opp_by_street = {}
+        self._hand_fold_to_raise_count_by_street = {}
 
     def _increment_stat_once_per_hand(self, stat_name: str, flag_name: str):
         if getattr(self, flag_name):
             return
         self.stats[stat_name] += 1
         setattr(self, flag_name, True)
+        self._stats_dirty = True
+
+    def _increment_street_stat_once_per_hand(self, action: str, street: str):
+        street = (street or "").strip().lower()
+        if street not in {"flop", "turn", "river"}:
+            return
+        stat_name = f"{action}_{street}"
+        if stat_name not in self.stats:
+            return
+        if stat_name in self._street_action_stat_flags:
+            return
+        self.stats[stat_name] += 1
+        self._street_action_stat_flags.add(stat_name)
         self._stats_dirty = True
 
     def observe_current_hand(self):
@@ -125,6 +168,72 @@ class Player:
         if hands_seen <= 0:
             return 0.0
         return (self.stats.get(stat_name, 0) / hands_seen) * 100.0
+
+    def get_fold_to_raise_percentage(self) -> float:
+        opportunities = self.stats.get("fold_to_raise_opp", 0)
+        if opportunities <= 5:
+            return 0.0
+        return (self.stats.get("fold_to_raise_count", 0) / opportunities) * 100.0
+
+    def _is_facing_raise(self, street: str) -> bool:
+        table = getattr(self, "table", None)
+        if table is None:
+            return False
+        return table.has_prior_raise_on_street(street)
+
+    def _record_fold_to_raise_stats(self, street: str, action: str):
+        if action not in {"call", "fold"}:
+            return
+        if not self._is_facing_raise(street):
+            return
+
+        if not self._hand_fold_to_raise_opp_by_street.get(street):
+            self.stats["fold_to_raise_opp"] += 1
+            self._hand_fold_to_raise_opp_by_street[street] = True
+            self._stats_dirty = True
+
+        if action == "fold" and not self._hand_fold_to_raise_count_by_street.get(street):
+            self.stats["fold_to_raise_count"] += 1
+            self._hand_fold_to_raise_count_by_street[street] = True
+            self._stats_dirty = True
+
+    def _record_three_bet_stats(self, street: str, action: str):
+        if street != "preflop" or action not in {"call", "fold", "raise"}:
+            return
+        table = getattr(self, "table", None)
+        if table is None:
+            return
+        if table.count_prior_raises_on_street(street) != 1:
+            return
+
+        if not self._hand_three_bet_opp_recorded:
+            self.stats["three_bet_opp"] += 1
+            self._hand_three_bet_opp_recorded = True
+            self._stats_dirty = True
+
+        if action == "raise" and not self._hand_three_bet_count_recorded:
+            self.stats["three_bet_count"] += 1
+            self._hand_three_bet_count_recorded = True
+            self._stats_dirty = True
+
+    def _record_fold_to_cbet_stats(self, street: str, action: str):
+        if street != "flop" or action not in {"call", "fold", "raise"}:
+            return
+        table = getattr(self, "table", None)
+        if table is None:
+            return
+        if not table.is_facing_flop_cbet(self):
+            return
+
+        if not self._hand_fold_to_cbet_opp_recorded:
+            self.stats["fold_to_cbet_opp"] += 1
+            self._hand_fold_to_cbet_opp_recorded = True
+            self._stats_dirty = True
+
+        if action == "fold" and not self._hand_fold_to_cbet_count_recorded:
+            self.stats["fold_to_cbet_count"] += 1
+            self._hand_fold_to_cbet_count_recorded = True
+            self._stats_dirty = True
 
     def classify_player(self) -> str:
         hands = self.stats.get("hands_seen", 0)
@@ -383,6 +492,10 @@ class Player:
                 self.amount_old = amount
                 return
 
+        self._record_fold_to_raise_stats(street, action)
+        self._record_three_bet_stats(street, action)
+        self._record_fold_to_cbet_stats(street, action)
+
         self.amount_old = amount
         self.actions.append(event)
         self.actions_by_street[street].append(event)
@@ -396,20 +509,30 @@ class Player:
         if action == "fold":
             self.in_hand = False
             self._increment_stat_once_per_hand("fold", "_hand_fold_recorded")
+            self._increment_street_stat_once_per_hand("fold", street)
 
         elif action == "call":
             self._increment_stat_once_per_hand("call", "_hand_call_recorded")
             if street == "preflop":
                 self._increment_stat_once_per_hand("vpip", "_hand_vpip_recorded")
+            else:
+                self._increment_street_stat_once_per_hand("call", street)
+
+        elif action == "check":
+            self._increment_stat_once_per_hand("check", "_hand_check_recorded")
+            self._increment_street_stat_once_per_hand("check", street)
 
         elif action == "bet":
             self._increment_stat_once_per_hand("bet", "_hand_bet_recorded")
+            self._increment_street_stat_once_per_hand("bet", street)
 
         elif action == "raise":
             self._increment_stat_once_per_hand("raise", "_hand_raise_recorded")
             if street == "preflop":
                 self._increment_stat_once_per_hand("vpip", "_hand_vpip_recorded")
                 self._increment_stat_once_per_hand("pfr", "_hand_pfr_recorded")
+            else:
+                self._increment_street_stat_once_per_hand("raise", street)
 
     def get_actions(self):
         return self.actions

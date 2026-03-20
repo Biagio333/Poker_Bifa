@@ -92,6 +92,7 @@ class Table:
         for action in self.available_actions:
             label = action.get("label", "")
             click_point = action.get("click_point", {})
+            ocr_rect_area = action.get("ocr_rect_area", "?")
             x = click_point.get("x", "?")
             y = click_point.get("y", "?")
 
@@ -104,7 +105,7 @@ class Table:
                 x = int(round(x / scale))
                 y = int(round(y / scale))
 
-            lines.append(f"{label} -> ({x}, {y})")
+            lines.append(f"{label} -> ({x}, {y}) area_ocr={ocr_rect_area}")
 
         return "\n".join(lines), self.avaible_button
 

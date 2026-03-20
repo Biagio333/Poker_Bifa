@@ -9,9 +9,11 @@ UDP_PROMPT_PORT = 9001
 
 def send_udp_message(payload, host=UDP_HOST, port=UDP_PORT):
     data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    separator = b"---------------------------------------------------------------------"
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.sendto(data, (host, port))
+        sock.sendto(separator, (host, port))
     finally:
         sock.close()
 

@@ -12,7 +12,7 @@ from scraper.ocr_utils import list_images
 from scraper.Image_search import image_search
 from poker.equity_calculator import PokerEquityCalculator
 from poker.debug_mjpeg import MJPEGDebugServer
-from poker.ollama_advisor import build_ollama_prompt, choose_action_with_ollama
+from poker.rule_based_advisor import choose_action_with_rules
 from poker.table import Table
 from poker.stats_db import PlayerStatsDB
 from poker.udp_sender import send_udp_message, send_udp_text
@@ -285,11 +285,15 @@ def main():
                 if select_amount_buttons:
                     print(f"Pulsanti di selezione importo disponibili: {[btn.get('label', '') for btn in select_amount_buttons]}")
 
+            h=0
             if len (table.available_actions)==0:
                 old_current_action_labels =None
-
+            else:
+                h=table.available_actions[0]['ocr_rect']['h']
+                if h<36: # se l'altezza del rettangolo OCR è troppo piccola, probabilmente è un errore di lettura e non devo resettare la memoria delle azioni disponibili
+                    old_current_action_labels =None
             
-            if table.available_actions and  select_amount_buttons and current_action_labels != old_current_action_labels:
+            if h>36 and old_current_action_labels== None:
 
                     equity_result = equity_calc.calculate_table_equity(
                         table,
@@ -308,30 +312,23 @@ def main():
                         last_action_labels = None
                         last_ollama_decision = None
                         last_pressed_action_labels = None
-                    elif current_action_labels != last_action_labels:
+                    else :
                         try:
-                            ollama_prompt = build_ollama_prompt(
+                            last_ollama_decision = choose_action_with_rules(
                                 table,
                                 hero_equity=hero_equity,
                                 hero_position=hero_position,
                                 big_blind=big_blind,
-                            )
-                            send_udp_text(ollama_prompt)
-
-                            last_ollama_decision = choose_action_with_ollama(
-                                table,
-                                hero_equity=hero_equity,
-                                hero_position=hero_position,
-                                big_blind=big_blind,
+                                seat_to_position=seat_to_pos,
                             )
                         except Exception as exc:
                             last_ollama_decision = {
                                 "selected_action": None,
-                                "reason": f"Errore Ollama: {exc}",
-                                "raw_response": "",
+                                "reason": f"Errore advisor rules: {exc}",
+                                "debug": {},
+                                "table_state": {},
                             }
-                        last_action_labels = current_action_labels
-                        last_sent_action_labels = None
+
 
                     if last_ollama_decision is not None:
                         selected_action = last_ollama_decision.get("selected_action")
@@ -341,26 +338,27 @@ def main():
                         selected_y = selected_point.get("y")
 
                         if isinstance(selected_x, (int, float)) and isinstance(selected_y, (int, float)):
-                            selected_x = int(round(selected_x / DISPLAY_SCALE))
-                            selected_y = int(round(selected_y / DISPLAY_SCALE))
+                            selected_x = int(round(selected_x/DISPLAY_SCALE)) 
+                            selected_y = int(round(selected_y/DISPLAY_SCALE))
 
-                        if selected_action and current_action_labels != last_sent_action_labels:
-                            send_udp_message({
-                                "type": "ollama_decision",
-                                "label": selected_label,
-                                "x": selected_x,
-                                "y": selected_y,
-                                "equity": hero_equity,
-                                "reason": last_ollama_decision.get("reason", ""),
-                                "street": table.street,
-                                "pot": table.pot,
-                                "board_cards": table.board_cards,
-                                "hero_cards": table.hero_cards,
-                            })
-                            last_sent_action_labels = current_action_labels
+
+                        send_udp_message({
+                            "type": "rule_decision",
+                            "label": selected_label or "None",
+                            "x": selected_x,
+                            "y": selected_y,
+                            "equity": hero_equity,
+                            "reason": last_ollama_decision.get("reason", ""),
+                            "debug": last_ollama_decision.get("debug", {}),
+                            "street": table.street,
+                            "pot": table.pot,
+                            "board_cards": table.board_cards,
+                            "hero_cards": table.hero_cards,
+                        })
+                        
 
                         if selected_action:
-                            print(f"{RED_TEXT}Ollama decision: {selected_label} -> ({selected_x}, {selected_y}){RESET_TEXT}")
+                            print(f"{RED_TEXT}Rule decision: {selected_label} -> ({selected_x}, {selected_y}){RESET_TEXT}")
 
                             if (
                                 SCRENSHOT_TYPE == SCR_TYPE.ADB
@@ -369,16 +367,20 @@ def main():
                                 and current_action_labels != last_pressed_action_labels
                             ):
                                 try:
-    #                               adb_tap(selected_x, selected_y)
+                                    # Esegue davvero il click ADB sull'azione selezionata.
+                                    adb_tap(selected_x, selected_y)
                                     last_pressed_action_labels = current_action_labels
                                     print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
                                 except Exception as exc:
                                     print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
 
-                            wait_press_button =True
+                            wait_press_button = True
                         else:
-                            print(f"{RED_TEXT}Ollama decision: None{RESET_TEXT}")
-                        print(f"{RED_TEXT}Ollama reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
+                            print(f"{RED_TEXT}Rule decision: None{RESET_TEXT}")
+
+                        print(f"{RED_TEXT}Rule reason: {last_ollama_decision.get('reason', '')}{RESET_TEXT}")
+                        print(f"{RED_TEXT}Rule debug: {last_ollama_decision.get('debug', {})}{RESET_TEXT}")
+
 
 
                     elapsed = time.time() - t0

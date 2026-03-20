@@ -201,6 +201,8 @@ class TableReader:
 
         return {
             "label": full_text,
+            "ocr_rect": text_rect,
+            "ocr_rect_area": int(text_rect["w"] * text_rect["h"]),
             "click_point": click_point,
         }
 

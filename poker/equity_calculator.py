@@ -302,11 +302,20 @@ class PokerEquityCalculator:
             return []
 
         max_attempts = min(300, len(deck) * len(deck))
-
         for _ in range(max_attempts):
             hand = random.sample(deck, 2)
             if self._hand_matches_player_type(hand, player_type, player_position):
                 return hand
+
+        valid_hands = []
+        for i in range(len(deck) - 1):
+            for j in range(i + 1, len(deck)):
+                hand = [deck[i], deck[j]]
+                if self._hand_matches_player_type(hand, player_type, player_position):
+                    valid_hands.append(hand)
+
+        if valid_hands:
+            return random.choice(valid_hands)
 
         return random.sample(deck, 2)
 
@@ -325,7 +334,16 @@ class PokerEquityCalculator:
             if self._hand_matches_player_type(hand, player_type, player_position):
                 return candidate
 
-        return random.choice(shuffled)
+        valid_candidates = []
+        for candidate in deck:
+            hand = [known_card, candidate]
+            if self._hand_matches_player_type(hand, player_type, player_position):
+                valid_candidates.append(candidate)
+
+        if valid_candidates:
+            return random.choice(valid_candidates)
+
+        return random.choice(deck)
 
     # =========================================================
     # COMPLETAMENTO MANI

@@ -27,7 +27,7 @@ class SCR_TYPE(Enum):
     SCRCPY = 1
     IMMAGE_SAVED = 2
 
-SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
+SCRENSHOT_TYPE = SCR_TYPE.ADB
 SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
 DISPLAY_SCALE = 0.8
@@ -122,6 +122,9 @@ def main():
     if SCRENSHOT_TYPE == SCR_TYPE.IMMAGE_SAVED:
         ocr = OCRReader(scale=DISPLAY_SCALE, gray=False, min_score=0.5)
 
+    if SCRENSHOT_TYPE == SCR_TYPE.SCRCPY:
+        ocr = OCRReader(scale=DISPLAY_SCALE, gray=False, min_score=0.5)
+
 
     reader = TableReader(roi_map, min_score=0.5)
 
@@ -191,8 +194,10 @@ def main():
             if key == ord("q"):
                 break
 
+        img_for_ocr = img_search.apply_ocr_mask(img)
+
         t0 = time.time()
-        ocr_results, ocr_time = ocr.run_ocr(img)
+        ocr_results, ocr_time = ocr.run_ocr(img_for_ocr)
         elapsed_ocr = time.time() - t0
 
 

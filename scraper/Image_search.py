@@ -11,6 +11,7 @@ class image_search:
         self.card_hero_img = None
         self.covered_card_img = None
         self.dealer_button_img = None
+        self.ocr_mask = None
         self.scale_factor = scale_factor
     
     def load_images(self, path_images):
@@ -35,7 +36,7 @@ class image_search:
         cards_hero_images = []
         for img, name in cards_board_images:
             # Ingrandisci le immagini per hero
-            hero_img = cv2.resize(img, None, fx=1.2, fy=1.2)
+            hero_img = cv2.resize(img, None, fx=1.16, fy=1.16)
             cards_hero_images.append([hero_img, name])
         self.card_hero_img = cards_hero_images
         
@@ -68,9 +69,42 @@ class image_search:
                 else:
                     print(f"Immagine dealer corrotta saltata: {card_file}")
         self.dealer_button_img = dealer_button_images
+
+        mask_path = os.path.join(base_path, "data", path_images, "OCR_MASK.png")
+        if os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+            if mask is not None and mask.size > 0:
+                if len(mask.shape) == 3 and mask.shape[2] == 4:
+                    mask = cv2.bitwise_not(mask[:, :, 3])
+                elif len(mask.shape) == 3:
+                    mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+                self.ocr_mask = cv2.resize(
+                    mask,
+                    None,
+                    fx=self.scale_factor,
+                    fy=self.scale_factor,
+                    interpolation=cv2.INTER_NEAREST,
+                )
+            else:
+                print(f"OCR mask corrotta saltata: {mask_path}")
+        else:
+            print(f"OCR mask non trovata: {mask_path}")
         
         print(f"Caricate {len(cards_board_images)} immagini board, {len(cards_hero_images)} hero (da board ingrandite), {len(covered_card_images)} covered, {len(dealer_button_images)} dealer")
         return cards_board_images, cards_hero_images, covered_card_images, dealer_button_images
+
+    def apply_ocr_mask(self, img):
+        if img is None or self.ocr_mask is None:
+            return img
+
+        if self.ocr_mask.shape[:2] != img.shape[:2]:
+            print(
+                f"OCR mask size mismatch: mask={self.ocr_mask.shape[:2]} img={img.shape[:2]}"
+            )
+            return img
+
+        return cv2.bitwise_and(img, img, mask=self.ocr_mask)
 
     def find_table_cards(self, table_img, threshold=0.95):
         """

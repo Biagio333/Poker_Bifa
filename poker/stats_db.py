@@ -272,3 +272,9 @@ class PlayerStatsDB:
                     payload["fold_to_raise_opp"],
                 ),
             )
+
+    def clear_all_stats(self) -> int:
+        with self._connect() as conn:
+            deleted_rows = conn.execute("SELECT COUNT(*) FROM player_stats").fetchone()[0]
+            conn.execute("DELETE FROM player_stats")
+        return int(deleted_rows)

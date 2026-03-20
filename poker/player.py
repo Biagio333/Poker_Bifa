@@ -49,7 +49,7 @@ class Player:
 
     def __init__(self, seat: int):
         self.seat = seat
-        self.name = None
+        self.name = "None"
         self._pending_name_change = None
         self.stack = 0.0
         self.current_bet = 0.0
@@ -311,6 +311,9 @@ class Player:
         normalized = (name or "").strip()
         if not normalized:
             return
+        
+        if normalized ==  'Vinto 1,27':
+            normalized =normalized
 
         action_data = self._extract_action_from_text(normalized)
 
@@ -329,7 +332,9 @@ class Player:
             self.counter_new_insert = 0
             return
 
-
+        if normalized.startswith("Tempo")or normalized.startswith("tempo"):
+            return
+        
         previous_name = (self.name or "").strip() if self.name else ""
         if previous_name and normalized != previous_name :
             # Se OCR è molto simile, consideriamo il nome invariato.
@@ -340,10 +345,9 @@ class Player:
                 "old_name": previous_name,
                 "new_name": normalized,
             }
-        if normalized.startswith("Tempo")or normalized.startswith("tempo"):
-            return
-        if len(normalized) >= 3:
-            self.name = normalized
+
+            if len(normalized) >= 3 and self.request_reset_hand==False:
+                self.name = normalized
 
     def _name_similarity(self, old_name: str, new_name: str) -> float:
         a = (old_name or "").strip().lower()

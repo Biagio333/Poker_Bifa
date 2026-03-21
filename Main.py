@@ -28,8 +28,10 @@ class SCR_TYPE(Enum):
     IMMAGE_SAVED = 2
 
 SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
+AUTO_PRESS_BUTTON = False
 SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
+DEBUG_START_FRAME_NUMBER = 670
 DISPLAY_SCALE = 0.8
 DISPLAY_PREVIEW = False
 PLAYER_STATS_DB_PATH = "data/player_stats.db"
@@ -85,7 +87,7 @@ PLAYER_TYPES_BY_SEAT = {
 }
 
 def main():
-    saved_screenshot_count = 0
+    saved_screenshot_count = DEBUG_START_FRAME_NUMBER
     preview_window = "Poker Bifa"
 
     if SCRENSHOT_TYPE == SCR_TYPE.ADB and SAVE_SCREENSHOT:
@@ -148,9 +150,15 @@ def main():
         t0 = time.time()
 
         if SCRENSHOT_TYPE == SCR_TYPE.IMMAGE_SAVED:
-            list_img = list_images()
+            list_img = list_images(
+                folder=SAVE_SCREENSHOT_DIR,
+                min_frame_number=DEBUG_START_FRAME_NUMBER,
+            )
             if not list_img:
-                print(f"Nessuna immagine trovata in '{SAVE_SCREENSHOT_DIR}'")
+                print(
+                    f"Nessuna immagine trovata in '{SAVE_SCREENSHOT_DIR}' "
+                    f"dal frame {DEBUG_START_FRAME_NUMBER:06d} in poi"
+                )
                 time.sleep(0.5)
                 continue
             count = (count + 1) % len(list_img)
@@ -268,7 +276,7 @@ def main():
             # Per testare diverse soglie, decommenta la riga sotto:
             # img_search.test_covered_cards_threshold(img)
             
-            active_seats = img_search.find_covered_cards(img, threshold=0.8)
+            active_seats = img_search.find_covered_cards(img, threshold=0.7)
             #print(f"Giocatori con carte coperte (in mano): {active_seats}")
 
             # Crea un dizionario inverso per lookup veloce
@@ -325,6 +333,7 @@ def main():
                                 hero_position=hero_position,
                                 big_blind=big_blind,
                                 seat_to_position=seat_to_pos,
+                                active_seats=active_seats,
                             )
                         except Exception as exc:
                             last_ollama_decision = {
@@ -337,21 +346,34 @@ def main():
 
                     if last_ollama_decision is not None:
                         selected_action = last_ollama_decision.get("selected_action")
+                        selected_amount_button = last_ollama_decision.get("selected_amount_button")
+
                         selected_label = selected_action.get("label", "") if selected_action else ""
                         selected_point = selected_action.get("click_point", {}) if selected_action else {}
                         selected_x = selected_point.get("x")
                         selected_y = selected_point.get("y")
 
+                        amount_label = selected_amount_button.get("label", "") if selected_amount_button else ""
+                        amount_point = selected_amount_button.get("click_point", {}) if selected_amount_button else {}
+                        amount_x = amount_point.get("x")
+                        amount_y = amount_point.get("y")
+
                         if isinstance(selected_x, (int, float)) and isinstance(selected_y, (int, float)):
-                            selected_x = int(round(selected_x/DISPLAY_SCALE)) 
+                            selected_x = int(round(selected_x/DISPLAY_SCALE))
                             selected_y = int(round(selected_y/DISPLAY_SCALE))
 
+                        if isinstance(amount_x, (int, float)) and isinstance(amount_y, (int, float)):
+                            amount_x = int(round(amount_x/DISPLAY_SCALE))
+                            amount_y = int(round(amount_y/DISPLAY_SCALE))
 
                         send_udp_message({
                             "type": "rule_decision",
                             "label": selected_label or "None",
                             "x": selected_x,
                             "y": selected_y,
+                            "amount_label": amount_label or None,
+                            "amount_x": amount_x,
+                            "amount_y": amount_y,
                             "equity": hero_equity,
                             "reason": last_ollama_decision.get("reason", ""),
                             "debug": last_ollama_decision.get("debug", {}),
@@ -360,9 +382,10 @@ def main():
                             "board_cards": table.board_cards,
                             "hero_cards": table.hero_cards,
                         })
-                        
 
                         if selected_action:
+                            if amount_label:
+                                print(f"{RED_TEXT}Rule size: {amount_label} -> ({amount_x}, {amount_y}){RESET_TEXT}")
                             print(f"{RED_TEXT}Rule decision: {selected_label} -> ({selected_x}, {selected_y}){RESET_TEXT}")
 
                             if (
@@ -372,10 +395,16 @@ def main():
                                 and current_action_labels != last_pressed_action_labels
                             ):
                                 try:
-                                    # Esegue davvero il click ADB sull'azione selezionata.
-                                    adb_tap(selected_x, selected_y)
-                                    last_pressed_action_labels = current_action_labels
-                                    print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
+                                    if isinstance(amount_x, int) and isinstance(amount_y, int):
+                                        if AUTO_PRESS_BUTTON:
+                                            adb_tap(amount_x, amount_y)
+                                        time.sleep(0.8 + random.random() * 2)
+                                        print(f"{RED_TEXT}ADB size tap eseguito su ({amount_x}, {amount_y}){RESET_TEXT}")
+
+                                    if AUTO_PRESS_BUTTON:
+                                        adb_tap(selected_x, selected_y)
+                                        last_pressed_action_labels = current_action_labels
+                                        print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
                                 except Exception as exc:
                                     print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
 

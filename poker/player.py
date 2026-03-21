@@ -337,8 +337,9 @@ class Player:
         
         previous_name = (self.name or "").strip() if self.name else ""
         if previous_name and normalized != previous_name :
+            similarity = self._name_similarity(previous_name, normalized) 
             # Se OCR è molto simile, consideriamo il nome invariato.
-            if self._name_similarity(previous_name, normalized) >= 0.90:
+            if similarity >= 0.80:
                 return
             self._pending_name_change = {
                 "seat": self.seat,

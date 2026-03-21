@@ -31,10 +31,142 @@ def _normalize_text(text):
 
 
 def _extract_amount(text):
-    match = re.search(r"\d+(?:[\.,]\d+)?", text or "")
-    if not match:
+    matches = re.findall(r"\d+(?:[\.,]\d+)?", text or "")
+    if not matches:
         return None
-    return float(match.group(0).replace(",", "."))
+    return float(matches[-1].replace(",", "."))
+
+
+def _amount_button_target_value(label, table_state: Dict):
+    normalized = _normalize_text(label)
+    pot_size = _safe_float(table_state.get("pot_size", 0.0))
+    big_blind = max(_safe_float(table_state.get("big_blind", 1.0)), 1e-9)
+    min_raise = _safe_float(table_state.get("min_raise", 0.0))
+    hero_stack = _safe_float(table_state.get("hero_stack", 0.0))
+    villain_stack = _safe_float(table_state.get("villain_stack", 0.0))
+    effective_stack = min(hero_stack, villain_stack) if villain_stack > 0 else hero_stack
+    amount = _extract_amount(normalized)
+
+    if normalized == "min" or "minim" in normalized:
+        return min_raise if min_raise > 0 else None
+    if normalized == "max" or "massim" in normalized:
+        return effective_stack if effective_stack > 0 else hero_stack or None
+    if "piatto" in normalized or "pot" in normalized:
+        return pot_size if pot_size > 0 else None
+    if "half" in normalized or "meta" in normalized:
+        return pot_size * 0.5 if pot_size > 0 else None
+    if "terz" in normalized:
+        return pot_size * (1.0 / 3.0) if pot_size > 0 else None
+
+    if amount is not None:
+        if "/" in normalized:
+            fraction_match = re.search(r"(\d+)\s*/\s*(\d+)", normalized)
+            if fraction_match and pot_size > 0:
+                numerator = float(fraction_match.group(1))
+                denominator = max(float(fraction_match.group(2)), 1.0)
+                return pot_size * (numerator / denominator)
+        if any(token in normalized for token in ("bb", "blind", "bui")):
+            return amount * big_blind
+        if "x" in normalized and min_raise > 0:
+            return amount * min_raise
+        return amount
+
+    if "all" in normalized:
+        return effective_stack if effective_stack > 0 else hero_stack or None
+    return None
+
+
+def _select_amount_button(amount_buttons, target_amount, table_state: Dict):
+    if not amount_buttons or target_amount is None or target_amount <= 0:
+        return None
+
+    best_button = None
+    best_distance = None
+    best_value = None
+
+    for button in amount_buttons:
+        value = _amount_button_target_value(button.get("label", ""), table_state)
+        if value is None:
+            continue
+        distance = abs(value - target_amount)
+        if best_distance is None or distance < best_distance or (
+            abs(distance - best_distance) < 1e-9 and (best_value is None or value < best_value)
+        ):
+            best_button = button
+            best_distance = distance
+            best_value = value
+
+    return best_button
+
+
+def _preflop_raise_target(table_state, hand_category, hero_position, players_in_hand, effective_bb):
+    big_blind = max(_safe_float(table_state.get("big_blind", 1.0)), 1e-9)
+    to_call = _safe_float(table_state.get("to_call", 0.0))
+    hero_bet = _safe_float(table_state.get("hero_bet", 0.0))
+    current_price = hero_bet + to_call
+    spot = _detect_preflop_spot(table_state)
+    late_position = hero_position in {"btn", "co", "dealer"}
+    blind_position = hero_position in {"sb", "bb"}
+
+    if effective_bb <= 12 and hand_category in {"premium", "strong"}:
+        return max(current_price * 2.2, hero_bet + max(to_call, big_blind) * 2.2)
+
+    if spot == "free":
+        open_bb = 2.5 if late_position else 3.0
+        if blind_position:
+            open_bb = 3.5
+        if hand_category == "premium":
+            open_bb += 0.5
+        if players_in_hand > 2:
+            open_bb += min(1.0, 0.3 * (players_in_hand - 2))
+        return open_bb * big_blind
+
+    if spot == "limped":
+        limper_count = max(players_in_hand - 2, 1)
+        iso_bb = 4.0 + limper_count
+        if late_position:
+            iso_bb -= 0.5
+        if hand_category == "premium":
+            iso_bb += 0.5
+        return iso_bb * big_blind
+
+    if spot in {"open_raise", "reraise", "jam_or_huge_raise", "raised", "large_raise"}:
+        if hand_category == "premium":
+            multiplier = 2.8
+        elif hand_category == "strong":
+            multiplier = 2.5
+        else:
+            multiplier = 2.2
+        if effective_bb <= 25:
+            multiplier += 0.2
+        return current_price * multiplier
+
+    return None
+
+
+def _postflop_raise_target(table_state, decision_score, street):
+    pot_size = _safe_float(table_state.get("pot_size", 0.0))
+    to_call = _safe_float(table_state.get("to_call", 0.0))
+    hero_bet = _safe_float(table_state.get("hero_bet", 0.0))
+    min_raise = _safe_float(table_state.get("min_raise", 0.0))
+
+    if pot_size <= 0 and min_raise > 0:
+        return min_raise
+
+    if to_call <= 0:
+        pot_fraction = 0.5
+        if street == "turn":
+            pot_fraction = 0.66
+        elif street == "river":
+            pot_fraction = 0.75
+        if decision_score > 0.20:
+            pot_fraction += 0.10
+        return max(min_raise, pot_size * pot_fraction)
+
+    raise_to = hero_bet + to_call + max(to_call, pot_size * 0.5)
+    if decision_score > 0.18:
+        raise_to += pot_size * 0.25
+    return max(min_raise, raise_to)
 
 
 def _rank_order() -> str:
@@ -94,7 +226,7 @@ def _is_offsuit(hero_cards) -> bool:
     cards = _hero_cards_normalized(hero_cards)
     if len(cards) != 2:
         return False
-    return not _is_suited(cards)
+    return _card_suit(cards[0]) != _card_suit(cards[1])
 
 
 def _rank_values(hero_cards) -> List[int]:
@@ -222,13 +354,6 @@ def _is_protected_playable_preflop(hero_cards: List[str]) -> bool:
 
 
 def _detect_preflop_spot(table_state: Dict) -> str:
-    """
-    Spot preflop:
-    - free: nessuno da chiamare
-    - limped: call <= 1bb
-    - raised: raise normale
-    - large_raise: raise grande
-    """
     to_call = _safe_float(table_state.get("to_call", 0.0))
     big_blind = max(_safe_float(table_state.get("big_blind", 1.0)), 1e-9)
 
@@ -236,10 +361,14 @@ def _detect_preflop_spot(table_state: Dict) -> str:
         return "free"
 
     call_bb = to_call / big_blind
+
     if call_bb <= 1.0:
         return "limped"
+    if call_bb <= 3.5:
+        return "raised"        # 👈 open_raise trattato come raised
     if call_bb >= 6.0:
         return "large_raise"
+
     return "raised"
 
 
@@ -259,18 +388,65 @@ def _action_kind_from_label(label):
 
 
 def _find_action(table_actions, desired_kind):
-    for action in table_actions:
-        if _action_kind_from_label(action.get("label", "")) == desired_kind:
-            return action
+    candidates = [
+        action for action in table_actions
+        if _action_kind_from_label(action.get("label", "")) == desired_kind
+    ]
+    if not candidates:
+        return None
+
+    if desired_kind in {"raise", "bet"}:
+        def amount_key(action):
+            amount = _extract_amount(action.get("label", ""))
+            return float("inf") if amount is None else amount
+        return min(candidates, key=amount_key)
+
+    return candidates[0]
+
+
+def _find_button_by_label(buttons, label):
+    if not label:
+        return None
+    for button in buttons or []:
+        if str(button.get("label", "")).strip().lower() == str(label).strip().lower():
+            return button
     return None
 
 
-def _count_in_hand_players(table):
-    return sum(1 for player in table.players if player.in_hand)
+def _normalize_active_seats(active_seats):
+    if not active_seats:
+        return None
+    return {seat for seat in active_seats if isinstance(seat, int)}
 
 
-def _get_primary_villain(table):
-    opponents = [p for p in table.players if p.seat != table.hero_seat and p.in_hand]
+def _player_is_active_in_hand(table, player, active_seats=None):
+    if not player.in_hand:
+        return False
+    if active_seats is None:
+        return True
+    if player.seat == table.hero_seat:
+        return True
+    return player.seat in active_seats
+
+
+def _iter_active_players(table, active_seats=None):
+    normalized_active_seats = _normalize_active_seats(active_seats)
+    return [
+        player
+        for player in table.players
+        if _player_is_active_in_hand(table, player, normalized_active_seats)
+    ]
+
+
+def _count_in_hand_players(table, active_seats=None):
+    return len(_iter_active_players(table, active_seats))
+
+
+def _get_primary_villain(table, active_seats=None):
+    opponents = [
+        p for p in _iter_active_players(table, active_seats)
+        if p.seat != table.hero_seat
+    ]
     if not opponents:
         return None
 
@@ -298,13 +474,14 @@ def _raise_action_kind(available_kinds, street):
     return None
 
 
-def build_table_state(table, hero_equity=None, hero_position=None, big_blind=None, villain=None, seat_to_position=None):
+def build_table_state(table, hero_equity=None, hero_position=None, big_blind=None, villain=None, seat_to_position=None, active_seats=None):
     hero = table.get_player(table.hero_seat)
-    villain = villain or _get_primary_villain(table)
+    active_players = _iter_active_players(table, active_seats)
+    villain = villain or _get_primary_villain(table, active_seats)
     seat_to_position = seat_to_position or {}
 
     highest_bet = max(
-        (_safe_float(player.current_bet) for player in table.players if player.in_hand),
+        (_safe_float(player.current_bet) for player in active_players),
         default=0.0,
     )
     to_call = max(0.0, highest_bet - _safe_float(hero.current_bet))
@@ -332,8 +509,9 @@ def build_table_state(table, hero_equity=None, hero_position=None, big_blind=Non
         "to_call": to_call,
         "min_raise": min_raise,
         "big_blind": _safe_float(big_blind, 1.0),
-        "players_in_hand": _count_in_hand_players(table),
+        "players_in_hand": _count_in_hand_players(table, active_seats),
         "available_actions": [action.get("label", "") for action in table.available_actions],
+        "amount_button_labels": [button.get("label", "") for button in table.avaible_button],
         "monte_carlo_equity": _safe_float(hero_equity),
         "villain_position": seat_to_position.get(villain.seat, "") if villain is not None else "",
         "villain_stack": _safe_float(villain.stack) if villain is not None else 0.0,
@@ -358,6 +536,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     villain_type = str(table_state.get("villain_type", "unknown")).lower()
 
     available_action_labels = [str(label) for label in table_state.get("available_actions", [])]
+    amount_button_labels = [str(label) for label in table_state.get("amount_button_labels", [])]
     available_kinds = {_action_kind_from_label(label) for label in available_action_labels}
     available_kinds.discard(None)
 
@@ -500,7 +679,18 @@ def decide_preflop_action(table_state: Dict) -> Dict:
         elif "check" in available_kinds:
             action = "check"
 
-    confidence = _clamp(0.58 + abs(score) * 1.6, 0.0, 1.0)
+    raise_target = None
+    selected_amount_label = None
+    if action in {"raise", "bet"} and amount_button_labels:
+        raise_target = _preflop_raise_target(table_state, hand_category, hero_position, players_in_hand, effective_bb)
+        selected_amount_label = _select_amount_button(
+            [{"label": label} for label in amount_button_labels],
+            raise_target,
+            table_state,
+        )
+        selected_amount_label = selected_amount_label.get("label") if selected_amount_label else None
+
+    confidence = _clamp(0.5 + abs(score) * 2.5, 0.0, 1.0)
     reason = (
         f"preflop category={hand_category} spot={spot} pos={hero_position or '?'} "
         f"eff_bb={effective_bb:.1f} villain={villain_type} players={players_in_hand}"
@@ -523,6 +713,8 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             "ugly_offsuit": ugly_offsuit,
             "protected_playable": protected_playable,
             "score": round(score, 4),
+            "raise_target": round(raise_target, 4) if raise_target is not None else None,
+            "selected_amount_label": selected_amount_label,
         },
     }
 
@@ -547,6 +739,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     villain_bet = _safe_float(table_state.get("villain_bet", 0.0))
 
     available_action_labels = [str(label) for label in table_state.get("available_actions", [])]
+    amount_button_labels = [str(label) for label in table_state.get("amount_button_labels", [])]
     available_kinds = {_action_kind_from_label(label) for label in available_action_labels}
     available_kinds.discard(None)
 
@@ -698,6 +891,17 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 else:
                     action_kind = next(iter(available_kinds), "check")
 
+    raise_target = None
+    selected_amount_label = None
+    if action_kind in {"raise", "bet"} and amount_button_labels:
+        raise_target = _postflop_raise_target(table_state, decision_score, street)
+        selected_amount_label = _select_amount_button(
+            [{"label": label} for label in amount_button_labels],
+            raise_target,
+            table_state,
+        )
+        selected_amount_label = selected_amount_label.get("label") if selected_amount_label else None
+
     confidence = _clamp(0.5 + abs(decision_score) * 2.5, 0.0, 1.0)
 
     reason = (
@@ -728,6 +932,8 @@ def decide_postflop_action(table_state: Dict) -> Dict:
             "sample_weight": round(sample_weight, 4),
             "spr": round(spr, 4),
             "bet_pressure": round(bet_pressure, 4),
+            "raise_target": round(raise_target, 4) if raise_target is not None else None,
+            "selected_amount_label": selected_amount_label,
         },
     }
 
@@ -739,16 +945,17 @@ def decide_action(table_state: Dict) -> Dict:
     return decide_postflop_action(table_state)
 
 
-def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_blind=None, seat_to_position=None):
+def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_blind=None, seat_to_position=None, active_seats=None):
     if not table.available_actions:
         return {
             "selected_action": None,
+            "selected_amount_button": None,
             "reason": "Nessuna azione disponibile.",
             "debug": {},
             "table_state": {},
         }
 
-    villain = _get_primary_villain(table)
+    villain = _get_primary_villain(table, active_seats)
     table_state = build_table_state(
         table,
         hero_equity=hero_equity,
@@ -756,6 +963,7 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
         big_blind=big_blind,
         villain=villain,
         seat_to_position=seat_to_position,
+        active_seats=active_seats,
     )
     decision = decide_action(table_state)
     selected_action = _find_action(table.available_actions, decision["action"])
@@ -787,8 +995,16 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
             if selected_action is not None:
                 break
 
+    selected_amount_button = None
+    if selected_action is not None and decision["action"] in {"raise", "bet"}:
+        selected_amount_button = _find_button_by_label(
+            table.avaible_button,
+            decision.get("debug", {}).get("selected_amount_label"),
+        )
+
     return {
         "selected_action": selected_action,
+        "selected_amount_button": selected_amount_button,
         "reason": decision["reason"],
         "debug": decision["debug"],
         "table_state": table_state,

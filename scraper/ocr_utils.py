@@ -98,7 +98,13 @@ import os
 from typing import Optional, Union
 
 
-def list_images(folder="immage"):
+def extract_frame_number(path):
+    name = os.path.splitext(os.path.basename(path))[0]
+    match = re.search(r"(\d+)$", name)
+    return int(match.group(1)) if match else None
+
+
+def list_images(folder="immage", min_frame_number=None):
 
     valid_ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 
@@ -107,9 +113,15 @@ def list_images(folder="immage"):
     for f in os.listdir(folder):
 
         if f.lower().endswith(valid_ext):
-            files.append(os.path.join(folder, f))
+            file_path = os.path.join(folder, f)
+            frame_number = extract_frame_number(file_path)
 
-    files.sort(key=os.path.getmtime)
+            if min_frame_number is not None and frame_number is not None and frame_number < min_frame_number:
+                continue
+
+            files.append(file_path)
+
+    files.sort(key=lambda path: (extract_frame_number(path) is None, extract_frame_number(path) or 0, os.path.getmtime(path)))
 
     return files
 

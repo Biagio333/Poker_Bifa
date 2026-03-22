@@ -52,12 +52,14 @@ class OCRReader:
 
                 img = img_full
 
-                if self.scale != 1:
+                real_scale = self.scale
+
+                if real_scale != 1:
                     img = cv2.resize(
                         img,
                         None,
-                        fx=self.scale,
-                        fy=self.scale,
+                        fx=real_scale,
+                        fy=real_scale,
                         interpolation=cv2.INTER_AREA
                     )
 

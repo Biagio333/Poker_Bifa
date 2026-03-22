@@ -106,6 +106,25 @@ class image_search:
 
         return cv2.bitwise_and(img, img, mask=self.ocr_mask)
 
+    def _safe_match_template(self, search_img, template, *, label="template"):
+        if search_img is None or template is None:
+            return None
+
+        search_h, search_w = search_img.shape[:2]
+        templ_h, templ_w = template.shape[:2]
+
+        if search_h <= 0 or search_w <= 0 or templ_h <= 0 or templ_w <= 0:
+            return None
+
+        if templ_h > search_h or templ_w > search_w:
+            print(
+                f"Template troppo grande per ROI in {label}: "
+                f"roi={search_w}x{search_h} template={templ_w}x{templ_h}"
+            )
+            return None
+
+        return cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
+
     def find_table_cards(self, table_img, threshold=0.95):
         """
         Cerca le carte nel ROI 'carte_tavolo' usando template matching con NMS.
@@ -132,7 +151,9 @@ class image_search:
         
         # Confronta con ogni template delle carte del board
         for template, name in self.card_table_img:
-            result = cv2.matchTemplate(table_roi, template, cv2.TM_CCOEFF_NORMED)
+            result = self._safe_match_template(table_roi, template, label="table_cards")
+            if result is None:
+                continue
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             if max_val >= threshold:
@@ -182,7 +203,9 @@ class image_search:
         
         # Confronta con ogni template delle carte hero
         for template, name in self.card_hero_img:
-            result = cv2.matchTemplate(table_roi, template, cv2.TM_CCOEFF_NORMED)
+            result = self._safe_match_template(table_roi, template, label="hero_cards")
+            if result is None:
+                continue
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             if max_val >= threshold:
@@ -233,7 +256,9 @@ class image_search:
         best_location = None
         
         for template, name in self.dealer_button_img:
-            result = cv2.matchTemplate(table_roi, template, cv2.TM_CCOEFF_NORMED)
+            result = self._safe_match_template(table_roi, template, label="dealer_button")
+            if result is None:
+                continue
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             if max_val >= threshold and max_val > best_confidence:
@@ -308,7 +333,9 @@ class image_search:
         all_confidences = []  # Per debug: tutti i valori di confidenza
         
         for template, name in self.covered_card_img:
-            result = cv2.matchTemplate(search_roi, template, cv2.TM_CCOEFF_NORMED)
+            result = self._safe_match_template(search_roi, template, label="covered_cards")
+            if result is None:
+                continue
             
             # Trova il valore massimo per questo template
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
@@ -363,7 +390,9 @@ class image_search:
             max_conf = 0
             
             for template, name in self.covered_card_img:
-                result = cv2.matchTemplate(search_roi, template, cv2.TM_CCOEFF_NORMED)
+                result = self._safe_match_template(search_roi, template, label="covered_cards_test")
+                if result is None:
+                    continue
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
                 max_conf = max(max_conf, max_val)
                 

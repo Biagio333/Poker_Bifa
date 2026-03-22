@@ -13,7 +13,7 @@ VALID_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 if not os.path.isdir(INPUT_DIR):
     raise FileNotFoundError(f"Cartella non trovata: {INPUT_DIR}")
 
-ocr = OCRReader(scale=0.4, gray=False)
+ocr = OCRReader(scale=1, gray=False)
 
 files = sorted(os.listdir(INPUT_DIR))
 
@@ -25,7 +25,7 @@ for filename in files:
     input_path = os.path.join(INPUT_DIR, filename)
     img = cv2.imread(input_path)
     
-    img = cv2.resize(img, (0, 0), fx=0.4, fy=0.4)
+    img = cv2.resize(img, (0, 0), fx=1, fy=1)
     texts, ocr_time = ocr.run_ocr(img)
 
     img = ocr.draw_results(img, texts, ocr_time)

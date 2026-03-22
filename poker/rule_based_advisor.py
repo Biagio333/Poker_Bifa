@@ -1,6 +1,11 @@
 import re
 from typing import Dict, List
 
+from treys import Card, Evaluator
+
+
+_HAND_EVALUATOR = Evaluator()
+
 
 def _safe_float(value, default=0.0):
     try:
@@ -35,6 +40,37 @@ def _extract_amount(text):
     if not matches:
         return None
     return float(matches[-1].replace(",", "."))
+
+
+def _to_treys_card(card: str):
+    if not isinstance(card, str) or len(card) < 2:
+        return None
+    rank = card[0].upper()
+    suit = card[1].lower()
+    if rank not in "23456789TJQKA" or suit not in "cdhs":
+        return None
+    try:
+        return Card.new(rank + suit)
+    except Exception:
+        return None
+
+
+def _postflop_hand_class(hero_cards, board_cards):
+    hero = [_to_treys_card(card) for card in _hero_cards_normalized(hero_cards)]
+    board = [_to_treys_card(card) for card in list(board_cards or [])]
+
+    hero = [card for card in hero if card is not None]
+    board = [card for card in board if card is not None]
+
+    if len(hero) != 2 or len(board) < 3:
+        return None
+
+    try:
+        score = _HAND_EVALUATOR.evaluate(board, hero)
+        rank_class = _HAND_EVALUATOR.get_rank_class(score)
+        return _HAND_EVALUATOR.class_to_string(rank_class)
+    except Exception:
+        return None
 
 
 def _amount_button_target_value(label, table_state: Dict):
@@ -108,8 +144,12 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
     late_position = hero_position in {"btn", "co", "dealer"}
     blind_position = hero_position in {"sb", "bb"}
 
-    if effective_bb <= 12 and hand_category in {"premium", "strong"}:
-        return max(current_price * 2.0, hero_bet + max(to_call, big_blind) * 2.0)
+    # Short stack: premium spinge di più, strong resta più controllata
+    if effective_bb <= 10:
+        if hand_category == "premium":
+            return max(current_price * 2.2, hero_bet + max(to_call, big_blind) * 2.2)
+        if hand_category == "strong":
+            return max(current_price * 2.0, hero_bet + max(to_call, big_blind) * 2.0)
 
     if spot == "free":
         open_bb = 2.3 if late_position else 2.7
@@ -132,15 +172,17 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
             iso_bb += 0.3
         return iso_bb * big_blind
 
-    if spot in {"open_raise", "reraise", "jam_or_huge_raise", "raised", "large_raise"}:
+    if spot in {"raised", "large_raise"}:
         if hand_category == "premium":
-            multiplier = 2.5
+            multiplier = 2.4
         elif hand_category == "strong":
-            multiplier = 2.2
-        else:
             multiplier = 2.0
-        if effective_bb <= 25:
+        else:
+            multiplier = 1.8
+
+        if effective_bb <= 25 and hand_category == "premium":
             multiplier += 0.1
+
         return current_price * multiplier
 
     return None
@@ -207,7 +249,11 @@ def _card_ranks(hero_cards: List[str]) -> List[str]:
 
 
 def _rank_value(rank: str) -> int:
-    return _rank_order().index(rank.upper()) + 2
+    order = _rank_order()
+    rank = (rank or "").upper()
+    if rank not in order:
+        return 0
+    return order.index(rank) + 2
 
 
 def _is_pair(hero_cards) -> bool:
@@ -244,6 +290,19 @@ def _rank_values(hero_cards) -> List[int]:
         vals.append(order.index(r))
     return sorted(vals, reverse=True)
 
+def _is_medium_pair(hero_cards) -> bool:
+    cards = _hero_cards_normalized(hero_cards)
+    if len(cards) != 2 or not _is_pair(cards):
+        return False
+    rank = _rank_value(_card_rank(cards[0]))
+    return 10 <= rank <= 13   # 88-JJ circa nel tuo mapping reale dipende da _rank_value
+
+def _is_tt_or_jj(hero_cards) -> bool:
+    cards = _hero_cards_normalized(hero_cards)
+    if len(cards) != 2 or not _is_pair(cards):
+        return False
+    rank = _card_rank(cards[0])
+    return rank in {"T", "J"}
 
 def _is_trash_offsuit_preflop(hero_cards) -> bool:
     cards = _hero_cards_normalized(hero_cards)
@@ -278,7 +337,11 @@ def _preflop_hand_category(hero_cards: List[str]) -> str:
     - weak
     - trash
 
-    Privilegia playability e struttura della mano, non la raw equity.
+    Più prudente con le pocket pair medie:
+    AA/KK/QQ premium
+    JJ/TT/99 strong
+    88-66 medium
+    55-22 speculative
     """
     cards = _hero_cards_normalized(hero_cards)
     if len(cards) != 2:
@@ -292,15 +355,17 @@ def _preflop_hand_category(hero_cards: List[str]) -> str:
     gap = hi - lo
     broadway_count = sum(rank in "TJQKA" for rank in ranks)
 
+    
+
     if _is_trash_offsuit_preflop(cards):
         return "trash"
 
     if pair:
-        if hi >= 11:
+        if hi >= 14:   # QQ+
             return "premium"
-        if hi >= 8:
+        if hi >= 11:   # 99/JJ/TT
             return "strong"
-        if hi >= 5:
+        if hi >= 8:    # 66-88
             return "medium"
         return "speculative"
 
@@ -367,7 +432,7 @@ def _detect_preflop_spot(table_state: Dict) -> str:
     if call_bb <= 1.0:
         return "limped"
     if call_bb <= 3.5:
-        return "raised"        # 👈 open_raise trattato come raised
+        return "raised"
     if call_bb >= 6.0:
         return "large_raise"
 
@@ -525,8 +590,11 @@ def build_table_state(table, hero_equity=None, hero_position=None, big_blind=Non
 
 def decide_preflop_action(table_state: Dict) -> Dict:
     """
-    Decisione preflop rule-based.
-    NON usa la raw Monte Carlo equity come criterio dominante.
+    Decisione preflop rule-based più prudente.
+    Correzioni principali:
+    - TT/JJ non vengono trattate come monster da stackare sempre
+    - contro raise grandi si preferisce più call/fold e meno 4bet spew
+    - le pocket pair medie giocano più controllate
     """
     hero_cards = list(table_state.get("hero_cards", []))
     hero_position = str(table_state.get("hero_position", "")).lower()
@@ -552,11 +620,12 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     pair = _is_pair(hero_cards)
     ugly_offsuit = _is_trash_offsuit_preflop(hero_cards)
     protected_playable = _is_protected_playable_preflop(hero_cards)
+    tt_or_jj = _is_tt_or_jj(hero_cards)
 
     score = {
         "premium": 0.30,
-        "strong": 0.18,
-        "medium": 0.06,
+        "strong": 0.16,
+        "medium": 0.05,
         "speculative": -0.01,
         "weak": -0.08,
         "trash": -0.18,
@@ -576,7 +645,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     elif spot == "raised":
         score -= 0.03
     elif spot == "large_raise":
-        score -= 0.08
+        score -= 0.10
 
     if players_in_hand > 2:
         if hand_category in {"premium", "strong"}:
@@ -595,13 +664,17 @@ def decide_preflop_action(table_state: Dict) -> Dict:
         if hand_category == "speculative":
             score -= 0.05
         elif hand_category == "medium":
-            score -= 0.02
-        elif hand_category in {"premium", "strong"}:
+            score -= 0.03
+        elif hand_category == "strong":
+            score -= 0.01
+        elif hand_category == "premium":
             score += 0.015
 
     if villain_type in {"nit", "tag"} and spot in {"raised", "large_raise"}:
         if hand_category in {"medium", "speculative"}:
             score -= 0.03
+        elif tt_or_jj:
+            score -= 0.05
 
     if villain_type in {"lag", "aggressive", "maniac"} and spot in {"raised", "large_raise"}:
         if hand_category in {"strong", "medium"}:
@@ -616,10 +689,23 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     if ugly_offsuit:
         score -= 0.05
 
+    # Guard rail specifico per TT/JJ:
+    # non trattarle come mani da guerra totale contro grossa action
+    if tt_or_jj:
+        if spot == "raised":
+            score -= 0.03
+        elif spot == "large_raise":
+            score -= 0.08
+
+        if effective_bb <= 18:
+            score -= 0.04
+
     raise_kind = _raise_action_kind(available_kinds, "preflop")
 
     if hand_category == "premium":
-        if raise_kind:
+        if spot in {"raised", "large_raise"} and effective_bb <= 12 and raise_kind:
+            action = raise_kind
+        elif raise_kind:
             action = raise_kind
         elif "call" in available_kinds:
             action = "call"
@@ -627,17 +713,35 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             action = "check" if "check" in available_kinds else "fold"
 
     elif hand_category == "strong":
-        if spot in {"free", "limped"} and raise_kind:
-            action = raise_kind
-        elif spot in {"raised", "large_raise"}:
-            if score >= 0.05 and raise_kind and villain_type not in {"calling_station", "passive_fish"}:
+        if tt_or_jj:
+            if spot in {"free", "limped"} and raise_kind:
                 action = raise_kind
-            elif "call" in available_kinds:
-                action = "call"
+            elif spot == "raised":
+                if "call" in available_kinds:
+                    action = "call"
+                elif raise_kind and villain_type in {"lag", "aggressive", "maniac"} and effective_bb <= 14:
+                    action = raise_kind
+                else:
+                    action = "fold" if "fold" in available_kinds else "check"
+            elif spot == "large_raise":
+                if effective_bb <= 10 and "call" in available_kinds:
+                    action = "call"
+                else:
+                    action = "fold" if "fold" in available_kinds else "check"
             else:
-                action = "fold" if "fold" in available_kinds else "check"
+                action = "call" if "call" in available_kinds else "check"
         else:
-            action = "call" if "call" in available_kinds else "check"
+            if spot in {"free", "limped"} and raise_kind:
+                action = raise_kind
+            elif spot in {"raised", "large_raise"}:
+                if score >= 0.06 and raise_kind and villain_type not in {"calling_station", "passive_fish"} and effective_bb <= 20:
+                    action = raise_kind
+                elif "call" in available_kinds:
+                    action = "call"
+                else:
+                    action = "fold" if "fold" in available_kinds else "check"
+            else:
+                action = "call" if "call" in available_kinds else "check"
 
     elif hand_category == "medium":
         if spot in {"free", "limped"} and late_position and raise_kind and villain_type not in {"calling_station", "passive_fish"}:
@@ -646,7 +750,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             action = "check"
         elif spot == "limped" and "call" in available_kinds:
             action = "call"
-        elif spot == "raised" and score >= 0.02 and "call" in available_kinds:
+        elif spot == "raised" and score >= 0.02 and "call" in available_kinds and effective_bb >= 25:
             action = "call"
         else:
             action = "fold" if "fold" in available_kinds else "check"
@@ -673,8 +777,6 @@ def decide_preflop_action(table_state: Dict) -> Dict:
         else:
             action = "fold" if "fold" in available_kinds else "check"
 
-    # Protezione esplicita: suited broadway molto giocabili non devono
-    # essere foldate preflop in spot standard solo per score/spot aggressivi.
     if protected_playable and action == "fold":
         if "call" in available_kinds:
             action = "call"
@@ -684,7 +786,13 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     raise_target = None
     selected_amount_label = None
     if action in {"raise", "bet"} and amount_button_labels:
-        raise_target = _preflop_raise_target(table_state, hand_category, hero_position, players_in_hand, effective_bb)
+        raise_target = _preflop_raise_target(
+            table_state,
+            hand_category,
+            hero_position,
+            players_in_hand,
+            effective_bb,
+        )
         selected_amount_label = _select_amount_button(
             [{"label": label} for label in amount_button_labels],
             raise_target,
@@ -714,6 +822,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             "pair": pair,
             "ugly_offsuit": ugly_offsuit,
             "protected_playable": protected_playable,
+            "tt_or_jj": tt_or_jj,
             "score": round(score, 4),
             "raise_target": round(raise_target, 4) if raise_target is not None else None,
             "selected_amount_label": selected_amount_label,
@@ -721,10 +830,257 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     }
 
 
+def _rank_to_value(rank: str) -> int:
+    order = "23456789TJQKA"
+    if not rank:
+        return 0
+    rank = rank.upper()
+    if rank not in order:
+        return 0
+    return order.index(rank) + 2
+
+
+def _card_rank_value(card: str) -> int:
+    return _rank_to_value(_card_rank(card))
+
+
+def _count_ranks(cards: List[str]) -> Dict[int, int]:
+    counts = {}
+    for card in cards or []:
+        rv = _card_rank_value(card)
+        if rv <= 0:
+            continue
+        counts[rv] = counts.get(rv, 0) + 1
+    return counts
+
+
+def _count_suits(cards: List[str]) -> Dict[str, int]:
+    counts = {}
+    for card in cards or []:
+        s = _card_suit(card)
+        if not s:
+            continue
+        counts[s] = counts.get(s, 0) + 1
+    return counts
+
+
+def _sorted_unique_rank_values(cards: List[str]) -> List[int]:
+    vals = sorted({_card_rank_value(card) for card in cards or [] if _card_rank_value(card) > 0})
+    if 14 in vals:
+        vals = [1] + vals
+    return vals
+
+
+def _has_straight_draw(hero_cards: List[str], board_cards: List[str]) -> Dict[str, bool]:
+    hero_cards = _hero_cards_normalized(hero_cards)
+    board_cards = list(board_cards or [])
+
+    if len(hero_cards) != 2 or len(board_cards) < 3:
+        return {"open_ended": False, "gutshot": False}
+
+    all_cards = hero_cards + board_cards
+    vals = sorted(set(_card_rank_value(c) for c in all_cards if _card_rank_value(c) > 0))
+    if 14 in vals:
+        vals = [1] + vals
+
+    hero_vals = set(_card_rank_value(c) for c in hero_cards if _card_rank_value(c) > 0)
+
+    open_ended = False
+    gutshot = False
+
+    for start in range(1, 11):
+        straight = {start, start + 1, start + 2, start + 3, start + 4}
+        present = straight.intersection(vals)
+
+        if len(present) != 4:
+            continue
+
+        if not (hero_vals & present):
+            continue
+
+        missing = list(straight - present)
+        if len(missing) != 1:
+            continue
+
+        missing_rank = missing[0]
+        if missing_rank in {start, start + 4}:
+            open_ended = True
+        else:
+            gutshot = True
+
+    return {
+        "open_ended": open_ended,
+        "gutshot": gutshot and not open_ended,
+    }
+
+
+def _has_flush_draw(hero_cards: List[str], board_cards: List[str]) -> bool:
+    hero_cards = _hero_cards_normalized(hero_cards)
+    board_cards = list(board_cards or [])
+
+    if len(hero_cards) != 2 or len(board_cards) < 3:
+        return False
+
+    all_cards = hero_cards + board_cards
+    suit_counts = _count_suits(all_cards)
+
+    for suit, total_count in suit_counts.items():
+        if total_count == 4:
+            hero_count = sum(1 for c in hero_cards if _card_suit(c) == suit)
+            if hero_count >= 1:
+                return True
+
+    return False
+
+
+def _analyze_postflop_hand(hero_cards: List[str], board_cards: List[str]) -> Dict:
+    hero_cards = _hero_cards_normalized(hero_cards)
+    board_cards = list(board_cards or [])
+
+    result = {
+        "made_hand": None,
+        "pair_type": None,
+        "board_paired": False,
+        "hero_pair_rank": 0,
+        "top_board_rank": 0,
+        "second_board_rank": 0,
+        "third_board_rank": 0,
+        "overcards_in_hand": 0,
+        "flush_draw": False,
+        "open_ended": False,
+        "gutshot": False,
+        "combo_draw": False,
+        "strong_draw": False,
+        "showdown_value": False,
+        "hand_strength_bucket": "weak",
+    }
+
+    if len(hero_cards) != 2 or len(board_cards) < 3:
+        return result
+
+    all_cards = hero_cards + board_cards
+    hero_rank_counts = _count_ranks(hero_cards)
+    board_rank_counts = _count_ranks(board_cards)
+    all_rank_counts = _count_ranks(all_cards)
+
+    board_unique = sorted(board_rank_counts.keys(), reverse=True)
+    result["top_board_rank"] = board_unique[0] if len(board_unique) > 0 else 0
+    result["second_board_rank"] = board_unique[1] if len(board_unique) > 1 else 0
+    result["third_board_rank"] = board_unique[2] if len(board_unique) > 2 else 0
+    result["board_paired"] = any(v >= 2 for v in board_rank_counts.values())
+
+    hero_ranks = [_card_rank_value(c) for c in hero_cards]
+    board_ranks = [_card_rank_value(c) for c in board_cards]
+    top_board_rank = result["top_board_rank"]
+
+    result["overcards_in_hand"] = sum(1 for rv in hero_ranks if rv > top_board_rank)
+
+    class_name = _postflop_hand_class(hero_cards, board_cards)
+    result["made_hand"] = class_name
+
+    flush_draw = _has_flush_draw(hero_cards, board_cards)
+    straight_draws = _has_straight_draw(hero_cards, board_cards)
+    result["flush_draw"] = flush_draw
+    result["open_ended"] = straight_draws["open_ended"]
+    result["gutshot"] = straight_draws["gutshot"]
+    result["combo_draw"] = flush_draw and (result["open_ended"] or result["gutshot"])
+    result["strong_draw"] = flush_draw or result["open_ended"]
+
+    if class_name in {"Straight Flush", "Four of a Kind", "Full House", "Flush", "Straight"}:
+        result["hand_strength_bucket"] = "monster"
+        result["showdown_value"] = True
+        return result
+
+    if class_name == "Three of a Kind":
+        trip_ranks = [rank for rank, count in all_rank_counts.items() if count >= 3]
+        hero_pair_ranks = [rank for rank, count in hero_rank_counts.items() if count == 2]
+
+        if hero_pair_ranks:
+            result["pair_type"] = "set"
+            result["hero_pair_rank"] = hero_pair_ranks[0]
+            result["hand_strength_bucket"] = "monster"
+        else:
+            result["pair_type"] = "trips"
+            result["hero_pair_rank"] = max(trip_ranks) if trip_ranks else 0
+            result["hand_strength_bucket"] = "strong"
+        result["showdown_value"] = True
+        return result
+
+    if class_name == "Two Pair":
+        hero_set = set(hero_ranks)
+        board_set = set(board_ranks)
+        shared_pairs = hero_set.intersection(board_set)
+
+        if len(shared_pairs) >= 2:
+            result["pair_type"] = "top_two" if max(shared_pairs) == top_board_rank else "two_pair"
+        else:
+            result["pair_type"] = "two_pair"
+
+        result["hand_strength_bucket"] = "strong"
+        result["showdown_value"] = True
+        return result
+
+    if class_name == "Pair":
+        pair_ranks = [rank for rank, count in all_rank_counts.items() if count >= 2]
+
+        if len(hero_rank_counts) == 1:
+            hero_pair_rank = next(iter(hero_rank_counts.keys()))
+            result["hero_pair_rank"] = hero_pair_rank
+
+            if hero_pair_rank > top_board_rank:
+                result["pair_type"] = "overpair"
+                result["hand_strength_bucket"] = "strong"
+            elif hero_pair_rank == top_board_rank:
+                result["pair_type"] = "top_pair"
+                result["hand_strength_bucket"] = "medium_strong"
+            elif hero_pair_rank >= result["second_board_rank"]:
+                result["pair_type"] = "middle_pair"
+                result["hand_strength_bucket"] = "medium"
+            else:
+                result["pair_type"] = "underpair"
+                result["hand_strength_bucket"] = "medium"
+            result["showdown_value"] = True
+            return result
+
+        paired_hero_ranks = [rank for rank in hero_ranks if rank in board_rank_counts]
+        if paired_hero_ranks:
+            hero_pair_rank = max(paired_hero_ranks)
+            result["hero_pair_rank"] = hero_pair_rank
+
+            if hero_pair_rank == top_board_rank:
+                result["pair_type"] = "top_pair"
+                result["hand_strength_bucket"] = "medium_strong"
+            elif hero_pair_rank == result["second_board_rank"]:
+                result["pair_type"] = "middle_pair"
+                result["hand_strength_bucket"] = "medium"
+            else:
+                result["pair_type"] = "bottom_pair"
+                result["hand_strength_bucket"] = "medium"
+            result["showdown_value"] = True
+            return result
+
+        if pair_ranks:
+            result["pair_type"] = "board_pair"
+            result["hand_strength_bucket"] = "weak"
+            result["showdown_value"] = result["overcards_in_hand"] >= 1
+            return result
+
+    if class_name == "High Card":
+        if result["combo_draw"]:
+            result["hand_strength_bucket"] = "draw"
+        elif result["strong_draw"]:
+            result["hand_strength_bucket"] = "draw"
+        elif result["gutshot"]:
+            result["hand_strength_bucket"] = "draw"
+        else:
+            result["hand_strength_bucket"] = "weak"
+        result["showdown_value"] = result["overcards_in_hand"] >= 1
+        return result
+
+    return result
+
+
 def decide_postflop_action(table_state: Dict) -> Dict:
-    """
-    Mantiene la logica attuale: equity Monte Carlo + pot odds + exploit adjustment.
-    """
     villain_stats = table_state.get("villain_stats", {}) or {}
 
     street = str(table_state.get("street", "preflop")).lower()
@@ -772,132 +1128,340 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     if to_call > 0:
         required_equity = to_call / max(pot_size + to_call, 1e-9)
 
+    raw_edge = equity - required_equity
+
     sample_weight = _clamp(hands_seen / 40.0, 0.15, 1.0)
     effective_stack = min(hero_stack, villain_stack) if villain_stack > 0 else hero_stack
     spr = effective_stack / max(pot_size, big_blind, 1e-9)
-    bet_pressure = villain_bet / max(pot_size, big_blind, 1e-9) if villain_bet > 0 else to_call / max(pot_size, big_blind, 1e-9)
+    bet_pressure = (
+        villain_bet / max(pot_size, big_blind, 1e-9)
+        if villain_bet > 0
+        else to_call / max(pot_size, big_blind, 1e-9)
+    )
+
+    hand_analysis = _analyze_postflop_hand(
+        table_state.get("hero_cards", []),
+        table_state.get("board", []),
+    )
+
+    hand_class = hand_analysis["made_hand"]
+    pair_type = hand_analysis["pair_type"]
+    hand_strength_bucket = hand_analysis["hand_strength_bucket"]
+    flush_draw = hand_analysis["flush_draw"]
+    open_ended = hand_analysis["open_ended"]
+    gutshot = hand_analysis["gutshot"]
+    combo_draw = hand_analysis["combo_draw"]
+    strong_draw = hand_analysis["strong_draw"]
+    showdown_value = hand_analysis["showdown_value"]
 
     exploit_adjustment = 0.0
 
     if hero_position in {"btn", "co", "dealer"}:
-        exploit_adjustment += 0.015
+        exploit_adjustment += 0.01
     elif hero_position in {"sb", "bb", "utg", "mp"}:
         exploit_adjustment -= 0.01
 
     if players_in_hand > 2:
-        exploit_adjustment -= min(0.04, 0.015 * (players_in_hand - 2))
+        exploit_adjustment -= min(0.05, 0.02 * (players_in_hand - 2))
 
     if villain_type == "nit":
         exploit_adjustment -= 0.02
         if aggression >= 2.0:
             exploit_adjustment -= 0.015
         if bet_pressure >= 0.60:
-            exploit_adjustment -= 0.02
+            exploit_adjustment -= 0.015
 
     if villain_type in {"lag", "aggressive", "maniac"}:
-        exploit_adjustment += 0.015
-
-    if aggression >= 2.5:
-        exploit_adjustment += 0.02
-    elif aggression >= 1.5:
         exploit_adjustment += 0.01
 
-    if _can_raise(available_kinds):
-        if fold_to_raise_pct >= 0.60:
-            exploit_adjustment += 0.02
-        elif fold_to_raise_pct >= 0.45:
-            exploit_adjustment += 0.01
+    if aggression >= 2.5:
+        exploit_adjustment += 0.01
+    elif aggression >= 1.5:
+        exploit_adjustment += 0.005
 
-    if villain_type == "calling_station":
-        exploit_adjustment -= 0.03
-    if villain_type == "passive_fish":
-        exploit_adjustment -= 0.025
-    if call_pct >= 0.30 and aggression < 1.0:
-        exploit_adjustment -= 0.015
+    if villain_type in {"calling_station", "passive_fish"}:
+        if hand_strength_bucket in {"monster", "strong", "medium_strong"}:
+            exploit_adjustment += 0.015
+        else:
+            exploit_adjustment -= 0.035
 
     if villain_type == "tag":
         exploit_adjustment -= 0.01
+
     if villain_type == "unknown":
         exploit_adjustment -= 0.005
 
     if street == "flop":
         if fold_to_cbet_pct >= 0.55 and _can_raise(available_kinds):
-            exploit_adjustment += 0.015
+            exploit_adjustment += 0.01
         elif fold_to_cbet_pct <= 0.30:
             exploit_adjustment -= 0.01
 
+    if _can_raise(available_kinds):
+        if fold_to_raise_pct >= 0.60:
+            exploit_adjustment += 0.015
+        elif fold_to_raise_pct >= 0.45:
+            exploit_adjustment += 0.008
+
+    if strong_draw:
+        exploit_adjustment += 0.015
+    elif gutshot:
+        exploit_adjustment += 0.005
+
+    if combo_draw:
+        exploit_adjustment += 0.015
+
     if spr < 2.5:
-        exploit_adjustment += 0.01
+        if hand_strength_bucket in {"monster", "strong", "medium_strong"}:
+            exploit_adjustment += 0.02
+        elif strong_draw or combo_draw:
+            exploit_adjustment += 0.01
+        else:
+            exploit_adjustment -= 0.005
 
     if min_raise > 0 and min_raise >= hero_stack * 0.35:
+        exploit_adjustment -= 0.015
+
+    if bet_pressure >= 0.75:
+        exploit_adjustment -= 0.02
+    elif bet_pressure >= 0.50:
         exploit_adjustment -= 0.01
 
     exploit_adjustment *= sample_weight
     exploit_adjustment = _clamp(exploit_adjustment, -0.10, 0.08)
 
-    decision_score = equity - required_equity + exploit_adjustment
+    decision_score = raw_edge + exploit_adjustment
 
     can_check = "check" in available_kinds
     can_call = "call" in available_kinds
     can_fold = "fold" in available_kinds
     can_raise = _can_raise(available_kinds)
 
+    action_kind = None
+
     if to_call <= 0:
-        raise_threshold = 0.16
-        if street == "flop":
-            raise_threshold += 0.03
-        if players_in_hand > 2:
-            raise_threshold += 0.02
-        if street == "river":
-            raise_threshold += 0.04
+        if hand_strength_bucket == "monster":
+            if can_raise:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
 
-        if can_raise and decision_score > raise_threshold:
-            action_kind = _raise_action_kind(available_kinds, street) or "check"
-        else:
-            if can_check:
-                action_kind = "check"
-            elif can_call:
-                action_kind = "call"
-            elif can_fold:
-                action_kind = "fold"
-            else:
-                action_kind = next(iter(available_kinds), "check")
-    else:
-        if can_fold and decision_score < -0.015:
-            action_kind = "fold"
-        elif decision_score <= 0.09:
-            if can_call:
-                action_kind = "call"
-            elif can_check:
-                action_kind = "check"
-            elif can_fold:
-                action_kind = "fold"
-            else:
-                action_kind = next(iter(available_kinds), "check")
-        else:
-            raise_threshold = 0.15
+        elif hand_strength_bucket == "strong":
+            threshold = 0.10
             if street == "river":
-                raise_threshold += 0.05
-            elif street == "turn":
-                raise_threshold += 0.02
+                threshold += 0.03
             if villain_type in {"calling_station", "passive_fish"}:
-                raise_threshold += 0.05
-            elif villain_type in {"unknown", "tag", "nit"}:
+                threshold -= 0.01
+
+            if can_raise and decision_score > threshold:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        elif hand_strength_bucket == "medium_strong":
+            threshold = 0.16
+            if street == "turn":
+                threshold += 0.02
+            if street == "river":
+                threshold += 0.05
+            if villain_type in {"calling_station", "passive_fish"}:
+                threshold += 0.02
+
+            if can_raise and decision_score > threshold and equity >= 0.56:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        elif hand_strength_bucket == "medium":
+            threshold = 0.24
+            if pair_type == "top_pair":
+                threshold -= 0.05
+            elif pair_type == "middle_pair":
+                threshold += 0.02
+            elif pair_type in {"bottom_pair", "underpair"}:
+                threshold += 0.05
+
+            if street == "river":
+                threshold += 0.05
+            if villain_type in {"calling_station", "passive_fish"}:
+                threshold += 0.04
+
+            if can_raise and decision_score > threshold and equity >= 0.62 and players_in_hand <= 2:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        elif hand_strength_bucket == "draw":
+            bluff_threshold = 0.20
+            if combo_draw:
+                bluff_threshold -= 0.03
+            elif open_ended:
+                bluff_threshold -= 0.02
+            elif gutshot:
+                bluff_threshold += 0.03
+
+            if street == "river":
+                bluff_threshold += 0.10
+            if players_in_hand > 2:
+                bluff_threshold += 0.04
+            if villain_type in {"calling_station", "passive_fish"}:
+                bluff_threshold += 0.08
+            if fold_to_raise_pct >= 0.60:
+                bluff_threshold -= 0.03
+            if fold_to_cbet_pct >= 0.60 and street == "flop":
+                bluff_threshold -= 0.02
+
+            if can_raise and decision_score > bluff_threshold:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        else:
+            bluff_threshold = 0.30
+            if street == "turn":
+                bluff_threshold += 0.03
+            if street == "river":
+                bluff_threshold += 0.10
+            if players_in_hand > 2:
+                bluff_threshold += 0.05
+            if villain_type in {"calling_station", "passive_fish"}:
+                bluff_threshold += 0.08
+            if showdown_value:
+                bluff_threshold += 0.05
+
+            if can_raise and decision_score > bluff_threshold:
+                action_kind = _raise_action_kind(available_kinds, street) or "check"
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+    else:
+        if hand_strength_bucket == "monster":
+            raise_threshold = 0.08
+            if street == "river":
+                raise_threshold += 0.03
+            if villain_type in {"calling_station", "passive_fish"}:
                 raise_threshold += 0.02
 
-            if can_raise and decision_score > raise_threshold:
+            if can_raise and decision_score > raise_threshold and equity >= 0.68:
                 action_kind = _raise_action_kind(available_kinds, street)
                 if action_kind is None:
                     action_kind = "call" if can_call else "check"
+            elif can_call:
+                action_kind = "call"
             else:
-                if can_call:
-                    action_kind = "call"
-                elif can_check:
-                    action_kind = "check"
-                elif can_fold:
-                    action_kind = "fold"
+                action_kind = "fold" if can_fold else "check"
+
+        elif hand_strength_bucket == "strong":
+            raise_threshold = 0.14
+            if street == "river":
+                raise_threshold += 0.04
+            if villain_type in {"calling_station", "passive_fish"}:
+                raise_threshold += 0.04
+
+            if can_raise and decision_score > raise_threshold and equity >= 0.62:
+                action_kind = _raise_action_kind(available_kinds, street)
+                if action_kind is None:
+                    action_kind = "call" if can_call else "check"
+            elif decision_score >= -0.02 and can_call:
+                action_kind = "call"
+            else:
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+        elif hand_strength_bucket == "medium_strong":
+            raise_threshold = 0.18
+            if street == "river":
+                raise_threshold += 0.04
+            if villain_type in {"calling_station", "passive_fish"}:
+                raise_threshold += 0.05
+
+            if can_raise and decision_score > raise_threshold and equity >= 0.58:
+                action_kind = _raise_action_kind(available_kinds, street)
+                if action_kind is None:
+                    action_kind = "call" if can_call else "check"
+            elif decision_score >= -0.01 and can_call:
+                action_kind = "call"
+            else:
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+        elif hand_strength_bucket == "medium":
+            call_floor = -0.02
+            if pair_type == "top_pair":
+                call_floor += 0.03
+            elif pair_type == "middle_pair":
+                call_floor += 0.01
+            elif pair_type in {"bottom_pair", "underpair"}:
+                call_floor -= 0.02
+
+            if strong_draw or combo_draw:
+                call_floor += 0.02
+            elif gutshot:
+                call_floor += 0.005
+
+            if villain_type in {"calling_station", "passive_fish"}:
+                call_floor -= 0.005
+
+            if decision_score >= call_floor and can_call:
+                action_kind = "call"
+            else:
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+        elif hand_strength_bucket == "draw":
+            call_floor = 0.00
+            if combo_draw:
+                call_floor -= 0.04
+            elif open_ended or flush_draw:
+                call_floor -= 0.02
+            elif gutshot:
+                call_floor += 0.02
+
+            if bet_pressure >= 0.60:
+                call_floor += 0.03
+
+            semi_bluff_raise_threshold = 0.20
+            if combo_draw:
+                semi_bluff_raise_threshold -= 0.03
+            if villain_type in {"calling_station", "passive_fish"}:
+                semi_bluff_raise_threshold += 0.05
+
+            if can_raise and decision_score > semi_bluff_raise_threshold and combo_draw and players_in_hand <= 2:
+                action_kind = _raise_action_kind(available_kinds, street)
+                if action_kind is None:
+                    action_kind = "call" if can_call else "check"
+            elif decision_score >= call_floor and can_call:
+                action_kind = "call"
+            else:
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+        else:
+            if showdown_value and decision_score >= 0.03 and can_call and bet_pressure <= 0.35:
+                action_kind = "call"
+            else:
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+    if action_kind in {"raise", "bet"}:
+        if hand_strength_bucket == "weak":
+            if to_call > 0:
+                action_kind = "call" if can_call else ("check" if can_check else "fold")
+            else:
+                action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        elif hand_strength_bucket == "medium":
+            if street in {"turn", "river"} and equity < 0.68:
+                if to_call > 0:
+                    action_kind = "call" if can_call else ("check" if can_check else "fold")
                 else:
-                    action_kind = next(iter(available_kinds), "check")
+                    action_kind = "check" if can_check else ("call" if can_call else "fold")
+
+        elif hand_strength_bucket == "draw":
+            if street == "river":
+                action_kind = "check" if can_check else ("fold" if can_fold else "call")
+
+    if street == "river" and action_kind in {"raise", "bet"}:
+        if hand_strength_bucket in {"medium", "draw", "weak"}:
+            if to_call > 0:
+                action_kind = "call" if can_call else ("check" if can_check else "fold")
+            elif can_check:
+                action_kind = "check"
 
     raise_target = None
     selected_amount_label = None
@@ -910,13 +1474,14 @@ def decide_postflop_action(table_state: Dict) -> Dict:
         )
         selected_amount_label = selected_amount_label.get("label") if selected_amount_label else None
 
-    confidence = _clamp(0.5 + abs(decision_score) * 2.5, 0.0, 1.0)
+    confidence = _clamp(0.5 + abs(decision_score) * 2.2, 0.0, 1.0)
 
     reason = (
         f"street={street} eq={equity:.2f} req={required_equity:.2f} "
-        f"adj={exploit_adjustment:+.2f} score={decision_score:+.2f} "
-        f"villain={villain_type} vpip={vpip_pct:.0%} pfr={pfr_pct:.0%} "
-        f"agg={aggression:.2f} fvr={fold_to_raise_pct:.0%}"
+        f"raw={raw_edge:+.2f} adj={exploit_adjustment:+.2f} score={decision_score:+.2f} "
+        f"hand={hand_class} pair={pair_type} bucket={hand_strength_bucket} "
+        f"draws=fd:{int(flush_draw)} oesd:{int(open_ended)} gs:{int(gutshot)} "
+        f"villain={villain_type}"
     )
 
     return {
@@ -927,8 +1492,18 @@ def decide_postflop_action(table_state: Dict) -> Dict:
             "street": street,
             "equity": round(equity, 4),
             "required_equity": round(required_equity, 4),
+            "raw_edge": round(raw_edge, 4),
             "exploit_adjustment": round(exploit_adjustment, 4),
             "decision_score": round(decision_score, 4),
+            "hand_class": hand_class,
+            "pair_type": pair_type,
+            "hand_strength_bucket": hand_strength_bucket,
+            "flush_draw": flush_draw,
+            "open_ended": open_ended,
+            "gutshot": gutshot,
+            "combo_draw": combo_draw,
+            "strong_draw": strong_draw,
+            "showdown_value": showdown_value,
             "vpip_pct": round(vpip_pct, 4),
             "pfr_pct": round(pfr_pct, 4),
             "call_pct": round(call_pct, 4),
@@ -981,8 +1556,6 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
         and _is_protected_playable_preflop(table_state.get("hero_cards", []))
     )
 
-    # Guard rail finale: suited broadway molto giocabili non devono
-    # trasformarsi in fold per colpa del mapping OCR / fallback.
     if (
         protected_playable
         and selected_action is not None

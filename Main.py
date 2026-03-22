@@ -27,16 +27,21 @@ class SCR_TYPE(Enum):
     SCRCPY = 1
     IMMAGE_SAVED = 2
 
+IS_TORNEY = False  # se True, considera che i numeri OCR siano formattati senza separatore decimale e con eventuali migliaia separati da punti (es. 1.234 per mille e 2,10 per due euro e dieci centesimi)
 SCRENSHOT_TYPE = SCR_TYPE.ADB
-AUTO_PRESS_BUTTON = True
-SAVE_SCREENSHOT = False
+AUTO_PRESS_BUTTON = False
+SAVE_SCREENSHOT = True
 SAVE_SCREENSHOT_DIR = "immage"
-DEBUG_START_FRAME_NUMBER = 729
-DISPLAY_SCALE = 0.8
+DEBUG_START_FRAME_NUMBER = 0
+DISPLAY_SCALE = 1
 DISPLAY_PREVIEW = False
 PLAYER_STATS_DB_PATH = "data/player_stats.db"
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
+
+table_name = "Poker_star_A53_720x1600"
+#HALTEZZA_FOLD = 36  # oppo
+HALTEZZA_FOLD = 30  # A53
 
 
 SCRCPY_CMD = [
@@ -109,12 +114,12 @@ def main():
     server = MJPEGDebugServer(host="127.0.0.1", port=5000, jpeg_quality=80)
     server.start()
 
-    roi_map = ROIMap("data/Poker_star.json")
-    roi_map.load(DISPLAY_SCALE/0.4)  # le ROI sono state disegnate su screenshot al 40%, quindi scalano di conseguenza
+    roi_map = ROIMap(f"data/{table_name}.json")
+    roi_map.load(DISPLAY_SCALE)  # le 
 
     # Inizializza image_search e carica le immagini
-    img_search = image_search(roi_map, "Poker_star", scale_factor=DISPLAY_SCALE)
-    img_search.load_images("Poker_star")  # le immagini sono state disegnate su screenshot al 40%, quindi scalano di conseguenza
+    img_search = image_search(roi_map, table_name, scale_factor=DISPLAY_SCALE)
+    img_search.load_images(table_name)  #
 
     # Inizializza equity calculator
     equity_calc = PokerEquityCalculator()
@@ -191,7 +196,11 @@ def main():
             ris, img = cap.read()
             if not ris:
                 continue
-            img = cv2.resize(img, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
+            img = cv2.resize(
+                img,
+                None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE,
+                interpolation=cv2.INTER_AREA
+            )
 
 
         if img is None:
@@ -271,7 +280,7 @@ def main():
 
 
             # Cerca le carte hero
-            carte_hero = img_search.find_hero_cards(img)
+            carte_hero = img_search.find_hero_cards(img, threshold=0.9)
             carte_hero = [card[0].upper() + card[1] for card in carte_hero]
             print(f"Carte hero: {carte_hero}")
 
@@ -307,7 +316,7 @@ def main():
                 old_current_action_labels =None
             else:
                 h=table.available_actions[0]['ocr_rect']['h']
-                if h<36: # se l'altezza del rettangolo OCR è troppo piccola, probabilmente è un errore di lettura e non devo resettare la memoria delle azioni disponibili
+                if h<HALTEZZA_FOLD: # se l'altezza del rettangolo OCR è troppo piccola, probabilmente è un errore di lettura e non devo resettare la memoria delle azioni disponibili
                     old_current_action_labels =None
             #resetto anche se cambia street,
             if table.street != old_table_street: # nel preflop spesso non riesce a leggere bene le azioni disponibili, quindi aspetto a resettare la memoria finché non sono al flop o oltre
@@ -315,7 +324,7 @@ def main():
                  old_table_street = table.street
 
 
-            if h>36 and old_current_action_labels== None:
+            if h>HALTEZZA_FOLD and old_current_action_labels== None:
 
                     try:
                         equity_result = equity_calc.calculate_table_equity(

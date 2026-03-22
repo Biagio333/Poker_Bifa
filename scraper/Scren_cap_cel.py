@@ -36,18 +36,18 @@ class OCRReader:
                     err = result.stderr.decode(errors="ignore").strip()
                     if err:
                         print("ADB error:", err)
-                    time.sleep(0.05)
+                    time.sleep(0.2)
                     continue
 
                 if not result.stdout:
-                    time.sleep(0.02)
+                    time.sleep(0.2)
                     continue
 
                 data = result.stdout.replace(b"\r\r\n", b"\n")
                 img_full = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
                 if img_full is None:
-                    time.sleep(0.02)
+                    time.sleep(0.2)
                     continue
 
                 img = img_full
@@ -70,8 +70,10 @@ class OCRReader:
 
             except Exception as e:
                 print("Screenshot thread error:", e)
-                time.sleep(0.1)
+                time.sleep(0.2)
+        time.sleep(0.5)
 
+        
     def start_capture(self):
         if self.running:
             return

@@ -1,3 +1,4 @@
+import re
 import shutil
 import textwrap
 
@@ -36,6 +37,25 @@ class Table:
 
     def get_player(self, seat: int):
         return self.players[seat]
+
+    def _is_empty_seat_name(self, name: str) -> bool:
+        normalized_name = (name or "").strip().lower()
+        if normalized_name in {"", "none"}:
+            return True
+
+        compact_name = re.sub(r"[^a-z0-9]", "", normalized_name)
+        if compact_name in {"posto", "p0sto", "posto0", "seat", "empty", "emptyseat"}:
+            return True
+
+        return compact_name.startswith("posto") or compact_name.startswith("p0sto")
+
+    def get_occupied_seats(self):
+        occupied_seats = []
+        for player in self.players:
+            has_name = not self._is_empty_seat_name(player.name)
+            if has_name or player.stack > 0 or player.current_bet > 0:
+                occupied_seats.append(player.seat)
+        return occupied_seats
 
     def set_pot(self, pot: float):
         self.pot = pot

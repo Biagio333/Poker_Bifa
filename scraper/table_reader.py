@@ -227,6 +227,10 @@ class TableReader:
         button_rois = self.roi_map.get_by_prefix("select_amount")
 
         for roi_name, roi in sorted(button_rois.items()):
+            normalized_name = (roi_name or "").strip().lower()
+            if normalized_name.endswith("value") or "amount_value" in normalized_name:
+                continue
+
             roi_items = ocr_in_roi(ocr_results, roi, self.min_score)
             if not roi_items:
                 continue

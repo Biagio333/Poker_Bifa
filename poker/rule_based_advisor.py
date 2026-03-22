@@ -109,36 +109,38 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
     blind_position = hero_position in {"sb", "bb"}
 
     if effective_bb <= 12 and hand_category in {"premium", "strong"}:
-        return max(current_price * 2.2, hero_bet + max(to_call, big_blind) * 2.2)
+        return max(current_price * 2.0, hero_bet + max(to_call, big_blind) * 2.0)
 
     if spot == "free":
-        open_bb = 2.5 if late_position else 3.0
+        open_bb = 2.3 if late_position else 2.7
         if blind_position:
-            open_bb = 3.5
+            open_bb = 3.0
         if hand_category == "premium":
-            open_bb += 0.5
+            open_bb += 0.3
         if players_in_hand > 2:
-            open_bb += min(1.0, 0.3 * (players_in_hand - 2))
+            open_bb += min(0.7, 0.2 * (players_in_hand - 2))
         return open_bb * big_blind
 
     if spot == "limped":
         limper_count = max(players_in_hand - 2, 1)
-        iso_bb = 4.0 + limper_count
+        iso_bb = 3.5 + (0.75 * limper_count)
         if late_position:
             iso_bb -= 0.5
+        elif hand_category != "premium":
+            iso_bb -= 0.2
         if hand_category == "premium":
-            iso_bb += 0.5
+            iso_bb += 0.3
         return iso_bb * big_blind
 
     if spot in {"open_raise", "reraise", "jam_or_huge_raise", "raised", "large_raise"}:
         if hand_category == "premium":
-            multiplier = 2.8
-        elif hand_category == "strong":
             multiplier = 2.5
-        else:
+        elif hand_category == "strong":
             multiplier = 2.2
+        else:
+            multiplier = 2.0
         if effective_bb <= 25:
-            multiplier += 0.2
+            multiplier += 0.1
         return current_price * multiplier
 
     return None
@@ -154,18 +156,18 @@ def _postflop_raise_target(table_state, decision_score, street):
         return min_raise
 
     if to_call <= 0:
-        pot_fraction = 0.5
+        pot_fraction = 0.33
         if street == "turn":
-            pot_fraction = 0.66
+            pot_fraction = 0.45
         elif street == "river":
-            pot_fraction = 0.75
-        if decision_score > 0.20:
+            pot_fraction = 0.55
+        if decision_score > 0.24:
             pot_fraction += 0.10
         return max(min_raise, pot_size * pot_fraction)
 
-    raise_to = hero_bet + to_call + max(to_call, pot_size * 0.5)
-    if decision_score > 0.18:
-        raise_to += pot_size * 0.25
+    raise_to = hero_bet + to_call + max(to_call, pot_size * 0.33)
+    if decision_score > 0.22:
+        raise_to += pot_size * 0.15
     return max(min_raise, raise_to)
 
 
@@ -841,11 +843,13 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     can_raise = _can_raise(available_kinds)
 
     if to_call <= 0:
-        raise_threshold = 0.10
-        if street == "flop" and players_in_hand > 2:
+        raise_threshold = 0.16
+        if street == "flop":
+            raise_threshold += 0.03
+        if players_in_hand > 2:
             raise_threshold += 0.02
         if street == "river":
-            raise_threshold += 0.02
+            raise_threshold += 0.04
 
         if can_raise and decision_score > raise_threshold:
             action_kind = _raise_action_kind(available_kinds, street) or "check"
@@ -861,7 +865,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     else:
         if can_fold and decision_score < -0.015:
             action_kind = "fold"
-        elif decision_score <= 0.055:
+        elif decision_score <= 0.09:
             if can_call:
                 action_kind = "call"
             elif can_check:
@@ -871,11 +875,15 @@ def decide_postflop_action(table_state: Dict) -> Dict:
             else:
                 action_kind = next(iter(available_kinds), "check")
         else:
-            raise_threshold = 0.09
+            raise_threshold = 0.15
             if street == "river":
-                raise_threshold += 0.03
+                raise_threshold += 0.05
+            elif street == "turn":
+                raise_threshold += 0.02
             if villain_type in {"calling_station", "passive_fish"}:
-                raise_threshold += 0.04
+                raise_threshold += 0.05
+            elif villain_type in {"unknown", "tag", "nit"}:
+                raise_threshold += 0.02
 
             if can_raise and decision_score > raise_threshold:
                 action_kind = _raise_action_kind(available_kinds, street)

@@ -382,28 +382,44 @@ class image_search:
         
         print("=== FINE TEST ===\n")
 
-    def get_player_positions(self, dealer_seat):
+    def get_player_positions(self, dealer_seat, occupied_seats=None):
         """
         Determina le posizioni dei giocatori basate sul seat del dealer.
+        Ignora i posti vuoti quando viene fornita la lista dei seat occupati.
         
         Args:
             dealer_seat: Numero del seat del dealer (0-5)
+            occupied_seats: Lista dei seat occupati al tavolo
             
         Returns:
-            Dict con posizioni: {"UTG": seat, "MP": seat, "CO": seat, "BTN": seat, "SB": seat, "BB": seat}
+            Dict con posizioni -> seat per i giocatori realmente seduti
         """
         if dealer_seat is None:
             return {}
-        
-        # Posizioni relative al dealer (6 giocatori)
-        positions = {}
-        positions["BTN"] = dealer_seat  # Button = dealer
-        
-        # Calcola le altre posizioni in senso orario
-        positions["SB"] = (dealer_seat + 1) % 6
-        positions["BB"] = (dealer_seat + 2) % 6
-        positions["UTG"] = (dealer_seat + 3) % 6
-        positions["MP"] = (dealer_seat + 4) % 6  # Middle position
-        positions["CO"] = (dealer_seat + 5) % 6  # Cutoff
-        
-        return positions
+
+        if occupied_seats:
+            ordered_seats = []
+            total_seats = len([name for name in self.roi_map.all() if name.startswith("player_") and name.endswith("_name")]) or 6
+            for offset in range(total_seats):
+                seat = (dealer_seat + offset) % total_seats
+                if seat in occupied_seats:
+                    ordered_seats.append(seat)
+        else:
+            total_seats = 6
+            ordered_seats = [(dealer_seat + offset) % total_seats for offset in range(total_seats)]
+
+        if not ordered_seats:
+            return {}
+
+        position_names = {
+            2: ["BTN", "BB"],
+            3: ["BTN", "SB", "BB"],
+            4: ["BTN", "SB", "BB", "UTG"],
+            5: ["BTN", "SB", "BB", "UTG", "CO"],
+        }
+        labels = position_names.get(len(ordered_seats), ["BTN", "SB", "BB", "UTG", "MP", "CO"])
+
+        return {
+            label: seat
+            for label, seat in zip(labels, ordered_seats)
+        }

@@ -27,11 +27,11 @@ class SCR_TYPE(Enum):
     SCRCPY = 1
     IMMAGE_SAVED = 2
 
-SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
-AUTO_PRESS_BUTTON = False
+SCRENSHOT_TYPE = SCR_TYPE.ADB
+AUTO_PRESS_BUTTON = True
 SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
-DEBUG_START_FRAME_NUMBER = 670
+DEBUG_START_FRAME_NUMBER = 729
 DISPLAY_SCALE = 0.8
 DISPLAY_PREVIEW = False
 PLAYER_STATS_DB_PATH = "data/player_stats.db"
@@ -89,6 +89,8 @@ PLAYER_TYPES_BY_SEAT = {
 def main():
     saved_screenshot_count = DEBUG_START_FRAME_NUMBER
     preview_window = "Poker Bifa"
+
+    old_table_street = None
 
     if SCRENSHOT_TYPE == SCR_TYPE.ADB and SAVE_SCREENSHOT:
         os.makedirs(SAVE_SCREENSHOT_DIR, exist_ok=True)
@@ -254,7 +256,8 @@ def main():
                     for action in table.available_actions
                 )
         dealer = img_search.find_dealer_button(img,threshold=0.6)
-        posizioni = img_search.get_player_positions(dealer)
+        occupied_seats = table.get_occupied_seats()
+        posizioni = img_search.get_player_positions(dealer, occupied_seats=occupied_seats)
         seat_to_pos = {seat: pos for pos, seat in posizioni.items()}
 
         print(table.format_players_stats(seat_to_pos))
@@ -298,6 +301,7 @@ def main():
                 if select_amount_buttons:
                     print(f"Pulsanti di selezione importo disponibili: {[btn.get('label', '') for btn in select_amount_buttons]}")
 
+            #resetto le azioni bottini
             h=0
             if len (table.available_actions)==0:
                 old_current_action_labels =None
@@ -305,16 +309,26 @@ def main():
                 h=table.available_actions[0]['ocr_rect']['h']
                 if h<36: # se l'altezza del rettangolo OCR è troppo piccola, probabilmente è un errore di lettura e non devo resettare la memoria delle azioni disponibili
                     old_current_action_labels =None
-            
+            #resetto anche se cambia street,
+            if table.street != old_table_street: # nel preflop spesso non riesce a leggere bene le azioni disponibili, quindi aspetto a resettare la memoria finché non sono al flop o oltre
+                 old_current_action_labels =None
+                 old_table_street = table.street
+
+
             if h>36 and old_current_action_labels== None:
 
-                    equity_result = equity_calc.calculate_table_equity(
-                        table,
-                        seat_to_position=seat_to_pos,
-                        active_seats=active_seats,
-                        iterations=1000,
-                    )
-                    hero_equity = equity_result["hero_equity"]
+                    try:
+                        equity_result = equity_calc.calculate_table_equity(
+                            table,
+                            seat_to_position=seat_to_pos,
+                            active_seats=active_seats,
+                            iterations=1000,
+                        )
+                        hero_equity = equity_result.get("hero_equity", 0)
+                    except Exception as exc:
+                        hero_equity = 0
+                        print(f"Errore calcolo equity: {exc}")
+
                     if hero_equity is not None:
                         print("Hero equity:", hero_equity)
 

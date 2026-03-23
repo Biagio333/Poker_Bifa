@@ -29,20 +29,21 @@ class SCR_TYPE(Enum):
 
 IS_TORNEY = False  # se True, considera che i numeri OCR siano formattati senza separatore decimale e con eventuali migliaia separati da punti (es. 1.234 per mille e 2,10 per due euro e dieci centesimi)
 SCRENSHOT_TYPE = SCR_TYPE.ADB
-AUTO_PRESS_BUTTON = False
-SAVE_SCREENSHOT = True
+AUTO_PRESS_BUTTON = True
+SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
 DEBUG_START_FRAME_NUMBER = 0
-DISPLAY_SCALE = 1
+DISPLAY_SCALE = 0.8
 DISPLAY_PREVIEW = False
 PLAYER_STATS_DB_PATH = "data/player_stats.db"
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
 
-table_name = "Poker_star_A53_720x1600"
-#HALTEZZA_FOLD = 36  # oppo
-HALTEZZA_FOLD = 30  # A53
+table_name = "Poker_star_oppo_1080x2400"
+HALTEZZA_FOLD = 36  # oppo
+#HALTEZZA_FOLD = 30  # A53
 
+counter_press_button = 3
 
 SCRCPY_CMD = [
     "scrcpy",
@@ -280,7 +281,7 @@ def main():
 
 
             # Cerca le carte hero
-            carte_hero = img_search.find_hero_cards(img, threshold=0.9)
+            carte_hero = img_search.find_hero_cards(img, threshold=0.95)
             carte_hero = [card[0].upper() + card[1] for card in carte_hero]
             print(f"Carte hero: {carte_hero}")
 
@@ -313,19 +314,20 @@ def main():
             #resetto le azioni bottini
             h=0
             if len (table.available_actions)==0:
-                old_current_action_labels =None
+                old_current_action_labels = None
             else:
                 h=table.available_actions[0]['ocr_rect']['h']
                 if h<HALTEZZA_FOLD: # se l'altezza del rettangolo OCR è troppo piccola, probabilmente è un errore di lettura e non devo resettare la memoria delle azioni disponibili
-                    old_current_action_labels =None
+                    old_current_action_labels = None
             #resetto anche se cambia street,
             if table.street != old_table_street: # nel preflop spesso non riesce a leggere bene le azioni disponibili, quindi aspetto a resettare la memoria finché non sono al flop o oltre
-                 old_current_action_labels =None
+                 old_current_action_labels = None
                  old_table_street = table.street
 
 
-            if h>HALTEZZA_FOLD and old_current_action_labels== None:
-
+            if h>HALTEZZA_FOLD and old_current_action_labels == None:
+                #if table.available_actions[0]
+                    
                     try:
                         equity_result = equity_calc.calculate_table_equity(
                             table,
@@ -432,6 +434,8 @@ def main():
                                     print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
 
                             wait_press_button = True
+                            counter_press_button =1
+
                         else:
                             print(f"{RED_TEXT}Rule decision: None{RESET_TEXT}")
 
@@ -446,8 +450,11 @@ def main():
                     print(f"Elapsed time: {elapsed:.3f}         {elapsed_ocr:.3f} s\n")
         else: #aspetto che venga premuto il pulsante suggerito da Ollama
             ratio = SequenceMatcher(None, old_current_action_labels, current_action_labels).ratio()
-            if ratio < 0.8:
+            counter_press_button = counter_press_button-1
+            if counter_press_button < 0 or ratio < 0.8:
                 wait_press_button = False
+                table.available_actions =[]
+                old_current_action_labels =False
                 last_pressed_action_labels = None
 
     cv2.destroyAllWindows()

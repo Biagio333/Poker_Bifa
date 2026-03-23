@@ -4,6 +4,8 @@ import textwrap
 
 from poker.player import Player
 
+def normalize(s):
+    return s.strip().lower()
 
 class Table:
     """
@@ -31,9 +33,13 @@ class Table:
         self.street = "preflop"
 
         self.available_actions = []
+        self.available_actions_frame_precedente =[]
+
         self.avaible_button = []
         self.buttons_visible = False
         self._prev_board_len = 0
+
+
 
     def get_player(self, seat: int):
         return self.players[seat]
@@ -91,6 +97,8 @@ class Table:
         self.street = "preflop"
 
         self.available_actions.clear()
+        
+
         self.avaible_button.clear()
         self.buttons_visible = False
 
@@ -98,8 +106,24 @@ class Table:
             p.current_street = self.street
 
     def set_available_actions(self, actions):
-        self.available_actions = list(actions or [])
-        self.buttons_visible = len(self.available_actions) > 0
+        
+        self.available_actions_frame_precedente        
+        
+        a= self.available_actions_frame_precedente
+        b= list(actions or [])
+
+        if len(b)==3:
+            self.available_actions = b
+            self.buttons_visible = len(self.available_actions) > 0
+
+        if len(a)>0 and len(b)>0:
+            if len(a)== len(b):
+                if normalize(a[0]['label']) == normalize(b[0]['label']):
+                    self.available_actions = b
+                    self.buttons_visible = len(self.available_actions) > 0
+        
+        self.available_actions_frame_precedente =b
+
 
     def set_avaible_button(self, buttons):
         self.avaible_button = list(buttons or [])

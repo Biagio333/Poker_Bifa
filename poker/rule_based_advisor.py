@@ -1,10 +1,168 @@
 import re
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from treys import Card, Evaluator
 
 
 _HAND_EVALUATOR = Evaluator()
+
+
+@dataclass
+class AdvisorProfileConfig:
+    name: str = "cash_mixed"
+    game_type: str = "cash"          # cash | tournament
+    play_style: str = "mixed"        # aggressive | conservative | mixed
+
+    short_stack_bb: float = 15.0
+    medium_stack_bb: float = 40.0
+
+    # PREFLOP
+    preflop_base_shift: float = 0.0
+    preflop_open_shift: float = 0.0
+    preflop_call_shift: float = 0.0
+    preflop_3bet_shift: float = 0.0
+    preflop_speculative_shift: float = 0.0
+    preflop_short_stack_tightening: float = 0.0
+    preflop_deep_stack_loosening: float = 0.0
+
+    # POSTFLOP
+    postflop_base_shift: float = 0.0
+    postflop_raise_shift: float = 0.0
+    postflop_call_shift: float = 0.0
+    postflop_bluff_shift: float = 0.0
+    postflop_draw_shift: float = 0.0
+    postflop_thin_value_shift: float = 0.0
+
+    # TORNEO / CASH
+    tournament_survival_bias: float = 0.0
+    cash_ev_bias: float = 0.0
+
+    # SIZE
+    open_size_mult: float = 1.0
+    iso_size_mult: float = 1.0
+    raise_size_mult: float = 1.0
+    postflop_bet_size_mult: float = 1.0
+
+
+_PROFILE_LIBRARY = {
+    "cash_aggressive": AdvisorProfileConfig(
+        name="cash_aggressive",
+        game_type="cash",
+        play_style="aggressive",
+        preflop_base_shift=0.03,
+        preflop_open_shift=0.03,
+        preflop_call_shift=-0.01,
+        preflop_3bet_shift=-0.03,
+        preflop_speculative_shift=0.03,
+        preflop_deep_stack_loosening=0.03,
+        postflop_base_shift=0.02,
+        postflop_raise_shift=-0.04,
+        postflop_call_shift=-0.01,
+        postflop_bluff_shift=-0.05,
+        postflop_draw_shift=-0.03,
+        postflop_thin_value_shift=-0.03,
+        cash_ev_bias=0.02,
+        open_size_mult=1.05,
+        iso_size_mult=1.05,
+        raise_size_mult=1.08,
+        postflop_bet_size_mult=1.08,
+    ),
+    "cash_conservative": AdvisorProfileConfig(
+        name="cash_conservative",
+        game_type="cash",
+        play_style="conservative",
+        preflop_base_shift=-0.03,
+        preflop_open_shift=-0.02,
+        preflop_call_shift=0.02,
+        preflop_3bet_shift=0.04,
+        preflop_speculative_shift=-0.03,
+        preflop_short_stack_tightening=0.03,
+        postflop_base_shift=-0.02,
+        postflop_raise_shift=0.04,
+        postflop_call_shift=0.02,
+        postflop_bluff_shift=0.05,
+        postflop_draw_shift=0.02,
+        postflop_thin_value_shift=0.04,
+        cash_ev_bias=-0.01,
+        open_size_mult=0.97,
+        iso_size_mult=0.98,
+        raise_size_mult=0.95,
+        postflop_bet_size_mult=0.95,
+    ),
+    "cash_mixed": AdvisorProfileConfig(
+        name="cash_mixed",
+        game_type="cash",
+        play_style="mixed",
+    ),
+    "tournament_aggressive": AdvisorProfileConfig(
+        name="tournament_aggressive",
+        game_type="tournament",
+        play_style="aggressive",
+        short_stack_bb=18.0,
+        medium_stack_bb=35.0,
+        preflop_base_shift=0.02,
+        preflop_open_shift=0.04,
+        preflop_call_shift=0.02,
+        preflop_3bet_shift=-0.02,
+        preflop_speculative_shift=-0.01,
+        preflop_short_stack_tightening=0.02,
+        postflop_base_shift=0.01,
+        postflop_raise_shift=-0.03,
+        postflop_call_shift=0.01,
+        postflop_bluff_shift=-0.03,
+        postflop_draw_shift=-0.01,
+        tournament_survival_bias=0.02,
+        open_size_mult=1.00,
+        iso_size_mult=1.00,
+        raise_size_mult=1.03,
+        postflop_bet_size_mult=1.02,
+    ),
+    "tournament_conservative": AdvisorProfileConfig(
+        name="tournament_conservative",
+        game_type="tournament",
+        play_style="conservative",
+        short_stack_bb=18.0,
+        medium_stack_bb=35.0,
+        preflop_base_shift=-0.04,
+        preflop_open_shift=-0.03,
+        preflop_call_shift=0.04,
+        preflop_3bet_shift=0.05,
+        preflop_speculative_shift=-0.05,
+        preflop_short_stack_tightening=0.06,
+        postflop_base_shift=-0.03,
+        postflop_raise_shift=0.05,
+        postflop_call_shift=0.03,
+        postflop_bluff_shift=0.07,
+        postflop_draw_shift=0.03,
+        postflop_thin_value_shift=0.05,
+        tournament_survival_bias=0.05,
+        open_size_mult=0.95,
+        iso_size_mult=0.95,
+        raise_size_mult=0.94,
+        postflop_bet_size_mult=0.94,
+    ),
+    "tournament_mixed": AdvisorProfileConfig(
+        name="tournament_mixed",
+        game_type="tournament",
+        play_style="mixed",
+        short_stack_bb=18.0,
+        medium_stack_bb=35.0,
+        tournament_survival_bias=0.02,
+    ),
+}
+
+
+def get_advisor_profile(
+    profile_name: Optional[str] = None,
+    game_type: str = "cash",
+    play_style: str = "mixed",
+) -> AdvisorProfileConfig:
+    if profile_name:
+        return _PROFILE_LIBRARY.get(profile_name, _PROFILE_LIBRARY["cash_mixed"])
+
+    key = f"{(game_type or 'cash').lower()}_{(play_style or 'mixed').lower()}"
+    return _PROFILE_LIBRARY.get(key, _PROFILE_LIBRARY["cash_mixed"])
 
 
 def _safe_float(value, default=0.0):
@@ -73,6 +231,22 @@ def _postflop_hand_class(hero_cards, board_cards):
         return None
 
 
+def _effective_bb_from_state(table_state: Dict) -> float:
+    hero_stack = _safe_float(table_state.get("hero_stack", 0.0))
+    villain_stack = _safe_float(table_state.get("villain_stack", 0.0))
+    big_blind = max(_safe_float(table_state.get("big_blind", 1.0)), 1e-9)
+    effective_stack = min(hero_stack, villain_stack) if villain_stack > 0 else hero_stack
+    return effective_stack / big_blind
+
+
+def _stack_zone(effective_bb: float, profile: AdvisorProfileConfig) -> str:
+    if effective_bb <= profile.short_stack_bb:
+        return "short"
+    if effective_bb <= profile.medium_stack_bb:
+        return "medium"
+    return "deep"
+
+
 def _amount_button_target_value(label, table_state: Dict):
     normalized = _normalize_text(label)
     pot_size = _safe_float(table_state.get("pot_size", 0.0))
@@ -135,7 +309,9 @@ def _select_amount_button(amount_buttons, target_amount, table_state: Dict):
     return best_button
 
 
-def _preflop_raise_target(table_state, hand_category, hero_position, players_in_hand, effective_bb):
+def _preflop_raise_target(table_state, hand_category, hero_position, players_in_hand, effective_bb, profile=None):
+    profile = profile or get_advisor_profile()
+
     big_blind = max(_safe_float(table_state.get("big_blind", 1.0)), 1e-9)
     to_call = _safe_float(table_state.get("to_call", 0.0))
     hero_bet = _safe_float(table_state.get("hero_bet", 0.0))
@@ -144,12 +320,11 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
     late_position = hero_position in {"btn", "co", "dealer"}
     blind_position = hero_position in {"sb", "bb"}
 
-    # Short stack: premium spinge di più, strong resta più controllata
     if effective_bb <= 10:
         if hand_category == "premium":
-            return max(current_price * 2.2, hero_bet + max(to_call, big_blind) * 2.2)
+            return max(current_price * 2.2, hero_bet + max(to_call, big_blind) * 2.2) * profile.raise_size_mult
         if hand_category == "strong":
-            return max(current_price * 2.0, hero_bet + max(to_call, big_blind) * 2.0)
+            return max(current_price * 2.0, hero_bet + max(to_call, big_blind) * 2.0) * profile.raise_size_mult
 
     if spot == "free":
         open_bb = 2.3 if late_position else 2.7
@@ -159,7 +334,7 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
             open_bb += 0.3
         if players_in_hand > 2:
             open_bb += min(0.7, 0.2 * (players_in_hand - 2))
-        return open_bb * big_blind
+        return open_bb * big_blind * profile.open_size_mult
 
     if spot == "limped":
         limper_count = max(players_in_hand - 2, 1)
@@ -170,7 +345,7 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
             iso_bb -= 0.2
         if hand_category == "premium":
             iso_bb += 0.3
-        return iso_bb * big_blind
+        return iso_bb * big_blind * profile.iso_size_mult
 
     if spot in {"raised", "large_raise"}:
         if hand_category == "premium":
@@ -183,19 +358,21 @@ def _preflop_raise_target(table_state, hand_category, hero_position, players_in_
         if effective_bb <= 25 and hand_category == "premium":
             multiplier += 0.1
 
-        return current_price * multiplier
+        return current_price * multiplier * profile.raise_size_mult
 
     return None
 
 
-def _postflop_raise_target(table_state, decision_score, street):
+def _postflop_raise_target(table_state, decision_score, street, profile=None):
+    profile = profile or get_advisor_profile()
+
     pot_size = _safe_float(table_state.get("pot_size", 0.0))
     to_call = _safe_float(table_state.get("to_call", 0.0))
     hero_bet = _safe_float(table_state.get("hero_bet", 0.0))
     min_raise = _safe_float(table_state.get("min_raise", 0.0))
 
     if pot_size <= 0 and min_raise > 0:
-        return min_raise
+        return min_raise * profile.postflop_bet_size_mult
 
     if to_call <= 0:
         pot_fraction = 0.33
@@ -205,12 +382,12 @@ def _postflop_raise_target(table_state, decision_score, street):
             pot_fraction = 0.55
         if decision_score > 0.24:
             pot_fraction += 0.10
-        return max(min_raise, pot_size * pot_fraction)
+        return max(min_raise, pot_size * pot_fraction * profile.postflop_bet_size_mult)
 
     raise_to = hero_bet + to_call + max(to_call, pot_size * 0.33)
     if decision_score > 0.22:
         raise_to += pot_size * 0.15
-    return max(min_raise, raise_to)
+    return max(min_raise, raise_to * profile.postflop_bet_size_mult)
 
 
 def _rank_order() -> str:
@@ -290,12 +467,14 @@ def _rank_values(hero_cards) -> List[int]:
         vals.append(order.index(r))
     return sorted(vals, reverse=True)
 
+
 def _is_medium_pair(hero_cards) -> bool:
     cards = _hero_cards_normalized(hero_cards)
     if len(cards) != 2 or not _is_pair(cards):
         return False
     rank = _rank_value(_card_rank(cards[0]))
-    return 10 <= rank <= 13   # 88-JJ circa nel tuo mapping reale dipende da _rank_value
+    return 10 <= rank <= 13
+
 
 def _is_tt_or_jj(hero_cards) -> bool:
     cards = _hero_cards_normalized(hero_cards)
@@ -303,6 +482,7 @@ def _is_tt_or_jj(hero_cards) -> bool:
         return False
     rank = _card_rank(cards[0])
     return rank in {"T", "J"}
+
 
 def _is_trash_offsuit_preflop(hero_cards) -> bool:
     cards = _hero_cards_normalized(hero_cards)
@@ -328,21 +508,6 @@ def _is_trash_offsuit_preflop(hero_cards) -> bool:
 
 
 def _preflop_hand_category(hero_cards: List[str]) -> str:
-    """
-    Categorie preflop:
-    - premium
-    - strong
-    - medium
-    - speculative
-    - weak
-    - trash
-
-    Più prudente con le pocket pair medie:
-    AA/KK/QQ premium
-    JJ/TT/99 strong
-    88-66 medium
-    55-22 speculative
-    """
     cards = _hero_cards_normalized(hero_cards)
     if len(cards) != 2:
         return "trash"
@@ -355,17 +520,15 @@ def _preflop_hand_category(hero_cards: List[str]) -> str:
     gap = hi - lo
     broadway_count = sum(rank in "TJQKA" for rank in ranks)
 
-    
-
     if _is_trash_offsuit_preflop(cards):
         return "trash"
 
     if pair:
-        if hi >= 14:   # QQ+
+        if hi >= 14:
             return "premium"
-        if hi >= 11:   # 99/JJ/TT
+        if hi >= 11:
             return "strong"
-        if hi >= 8:    # 66-88
+        if hi >= 8:
             return "medium"
         return "speculative"
 
@@ -588,14 +751,9 @@ def build_table_state(table, hero_equity=None, hero_position=None, big_blind=Non
     }
 
 
-def decide_preflop_action(table_state: Dict) -> Dict:
-    """
-    Decisione preflop rule-based più prudente.
-    Correzioni principali:
-    - TT/JJ non vengono trattate come monster da stackare sempre
-    - contro raise grandi si preferisce più call/fold e meno 4bet spew
-    - le pocket pair medie giocano più controllate
-    """
+def decide_preflop_action(table_state: Dict, advisor_profile: Optional[AdvisorProfileConfig] = None) -> Dict:
+    advisor_profile = advisor_profile or get_advisor_profile()
+
     hero_cards = list(table_state.get("hero_cards", []))
     hero_position = str(table_state.get("hero_position", "")).lower()
     hero_stack = _safe_float(table_state.get("hero_stack", 0.0))
@@ -613,6 +771,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     hand_category = _preflop_hand_category(hero_cards)
     spot = _detect_preflop_spot(table_state)
     effective_bb = min(hero_stack, villain_stack) / big_blind if villain_stack > 0 else hero_stack / big_blind
+    stack_zone = _stack_zone(effective_bb, advisor_profile)
 
     late_position = hero_position in {"btn", "co", "dealer"}
     blind_position = hero_position in {"sb", "bb"}
@@ -630,6 +789,8 @@ def decide_preflop_action(table_state: Dict) -> Dict:
         "weak": -0.08,
         "trash": -0.18,
     }.get(hand_category, -0.18)
+
+    score += advisor_profile.preflop_base_shift
 
     if late_position:
         score += 0.04
@@ -689,8 +850,6 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     if ugly_offsuit:
         score -= 0.05
 
-    # Guard rail specifico per TT/JJ:
-    # non trattarle come mani da guerra totale contro grossa action
     if tt_or_jj:
         if spot == "raised":
             score -= 0.03
@@ -699,6 +858,29 @@ def decide_preflop_action(table_state: Dict) -> Dict:
 
         if effective_bb <= 18:
             score -= 0.04
+
+    if hand_category == "speculative":
+        score += advisor_profile.preflop_speculative_shift
+
+    if stack_zone == "short":
+        if hand_category in {"medium", "speculative", "weak"}:
+            score -= advisor_profile.preflop_short_stack_tightening
+        if advisor_profile.game_type == "tournament":
+            score -= advisor_profile.tournament_survival_bias
+
+    elif stack_zone == "deep":
+        if hand_category in {"medium", "speculative"}:
+            score += advisor_profile.preflop_deep_stack_loosening
+
+    if advisor_profile.game_type == "cash":
+        score += advisor_profile.cash_ev_bias
+
+    if spot == "free":
+        score += advisor_profile.preflop_open_shift
+    elif spot in {"raised", "large_raise"}:
+        score -= advisor_profile.preflop_3bet_shift
+    elif spot == "limped":
+        score -= advisor_profile.preflop_call_shift
 
     raise_kind = _raise_action_kind(available_kinds, "preflop")
 
@@ -734,7 +916,8 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             if spot in {"free", "limped"} and raise_kind:
                 action = raise_kind
             elif spot in {"raised", "large_raise"}:
-                if score >= 0.06 and raise_kind and villain_type not in {"calling_station", "passive_fish"} and effective_bb <= 20:
+                aggressive_3bet_threshold = 0.06 - advisor_profile.preflop_3bet_shift
+                if score >= aggressive_3bet_threshold and raise_kind and villain_type not in {"calling_station", "passive_fish"} and effective_bb <= 20:
                     action = raise_kind
                 elif "call" in available_kinds:
                     action = "call"
@@ -750,7 +933,7 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             action = "check"
         elif spot == "limped" and "call" in available_kinds:
             action = "call"
-        elif spot == "raised" and score >= 0.02 and "call" in available_kinds and effective_bb >= 25:
+        elif spot == "raised" and score >= (0.02 - advisor_profile.preflop_call_shift) and "call" in available_kinds and effective_bb >= 25:
             action = "call"
         else:
             action = "fold" if "fold" in available_kinds else "check"
@@ -758,9 +941,9 @@ def decide_preflop_action(table_state: Dict) -> Dict:
     elif hand_category == "speculative":
         if to_call <= 0 and "check" in available_kinds:
             action = "check"
-        elif spot == "limped" and late_position and effective_bb >= 25 and "call" in available_kinds:
+        elif spot == "limped" and late_position and effective_bb >= 25 and "call" in available_kinds and score >= (-0.04 - advisor_profile.preflop_call_shift):
             action = "call"
-        elif spot == "raised" and late_position and effective_bb >= 40 and suited and "call" in available_kinds:
+        elif spot == "raised" and late_position and effective_bb >= 40 and suited and "call" in available_kinds and score >= (-0.02 - advisor_profile.preflop_call_shift):
             action = "call"
         else:
             action = "fold" if "fold" in available_kinds else "check"
@@ -792,18 +975,20 @@ def decide_preflop_action(table_state: Dict) -> Dict:
             hero_position,
             players_in_hand,
             effective_bb,
+            advisor_profile,
         )
-        selected_amount_label = _select_amount_button(
+        selected_amount = _select_amount_button(
             [{"label": label} for label in amount_button_labels],
             raise_target,
             table_state,
         )
-        selected_amount_label = selected_amount_label.get("label") if selected_amount_label else None
+        selected_amount_label = selected_amount.get("label") if selected_amount else None
 
     confidence = _clamp(0.5 + abs(score) * 2.5, 0.0, 1.0)
     reason = (
         f"preflop category={hand_category} spot={spot} pos={hero_position or '?'} "
-        f"eff_bb={effective_bb:.1f} villain={villain_type} players={players_in_hand}"
+        f"eff_bb={effective_bb:.1f} villain={villain_type} players={players_in_hand} "
+        f"profile={advisor_profile.name}"
     )
 
     return {
@@ -812,6 +997,10 @@ def decide_preflop_action(table_state: Dict) -> Dict:
         "reason": reason,
         "debug": {
             "street": "preflop",
+            "advisor_profile": advisor_profile.name,
+            "game_type": advisor_profile.game_type,
+            "play_style": advisor_profile.play_style,
+            "stack_zone": stack_zone,
             "hand_category": hand_category,
             "spot": spot,
             "effective_bb": round(effective_bb, 4),
@@ -1080,7 +1269,8 @@ def _analyze_postflop_hand(hero_cards: List[str], board_cards: List[str]) -> Dic
     return result
 
 
-def decide_postflop_action(table_state: Dict) -> Dict:
+def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorProfileConfig] = None) -> Dict:
+    advisor_profile = advisor_profile or get_advisor_profile()
     villain_stats = table_state.get("villain_stats", {}) or {}
 
     street = str(table_state.get("street", "preflop")).lower()
@@ -1133,6 +1323,9 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     sample_weight = _clamp(hands_seen / 40.0, 0.15, 1.0)
     effective_stack = min(hero_stack, villain_stack) if villain_stack > 0 else hero_stack
     spr = effective_stack / max(pot_size, big_blind, 1e-9)
+    effective_bb = _effective_bb_from_state(table_state)
+    stack_zone = _stack_zone(effective_bb, advisor_profile)
+
     bet_pressure = (
         villain_bet / max(pot_size, big_blind, 1e-9)
         if villain_bet > 0
@@ -1230,6 +1423,21 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     exploit_adjustment *= sample_weight
     exploit_adjustment = _clamp(exploit_adjustment, -0.10, 0.08)
 
+    exploit_adjustment += advisor_profile.postflop_base_shift
+
+    if hand_strength_bucket == "draw":
+        exploit_adjustment -= advisor_profile.postflop_draw_shift
+
+    if hand_strength_bucket in {"medium", "medium_strong"}:
+        exploit_adjustment -= advisor_profile.postflop_thin_value_shift
+
+    if advisor_profile.game_type == "tournament":
+        if stack_zone == "short" and hand_strength_bucket in {"weak", "draw", "medium"}:
+            exploit_adjustment -= advisor_profile.tournament_survival_bias
+
+    if advisor_profile.game_type == "cash":
+        exploit_adjustment += advisor_profile.cash_ev_bias
+
     decision_score = raw_edge + exploit_adjustment
 
     can_check = "check" in available_kinds
@@ -1247,7 +1455,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "strong":
-            threshold = 0.10
+            threshold = 0.10 + advisor_profile.postflop_raise_shift
             if street == "river":
                 threshold += 0.03
             if villain_type in {"calling_station", "passive_fish"}:
@@ -1259,7 +1467,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "medium_strong":
-            threshold = 0.16
+            threshold = 0.16 + advisor_profile.postflop_thin_value_shift
             if street == "turn":
                 threshold += 0.02
             if street == "river":
@@ -1273,7 +1481,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "medium":
-            threshold = 0.24
+            threshold = 0.24 + advisor_profile.postflop_thin_value_shift
             if pair_type == "top_pair":
                 threshold -= 0.05
             elif pair_type == "middle_pair":
@@ -1292,7 +1500,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "draw":
-            bluff_threshold = 0.20
+            bluff_threshold = 0.20 + advisor_profile.postflop_bluff_shift
             if combo_draw:
                 bluff_threshold -= 0.03
             elif open_ended:
@@ -1317,7 +1525,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         else:
-            bluff_threshold = 0.30
+            bluff_threshold = 0.30 + advisor_profile.postflop_bluff_shift
             if street == "turn":
                 bluff_threshold += 0.03
             if street == "river":
@@ -1336,7 +1544,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
 
     else:
         if hand_strength_bucket == "monster":
-            raise_threshold = 0.08
+            raise_threshold = 0.08 + advisor_profile.postflop_raise_shift
             if street == "river":
                 raise_threshold += 0.03
             if villain_type in {"calling_station", "passive_fish"}:
@@ -1352,7 +1560,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "fold" if can_fold else "check"
 
         elif hand_strength_bucket == "strong":
-            raise_threshold = 0.14
+            raise_threshold = 0.14 + advisor_profile.postflop_raise_shift
             if street == "river":
                 raise_threshold += 0.04
             if villain_type in {"calling_station", "passive_fish"}:
@@ -1368,7 +1576,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
 
         elif hand_strength_bucket == "medium_strong":
-            raise_threshold = 0.18
+            raise_threshold = 0.18 + advisor_profile.postflop_raise_shift
             if street == "river":
                 raise_threshold += 0.04
             if villain_type in {"calling_station", "passive_fish"}:
@@ -1384,7 +1592,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
 
         elif hand_strength_bucket == "medium":
-            call_floor = -0.02
+            call_floor = -0.02 + advisor_profile.postflop_call_shift
             if pair_type == "top_pair":
                 call_floor += 0.03
             elif pair_type == "middle_pair":
@@ -1406,7 +1614,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
 
         elif hand_strength_bucket == "draw":
-            call_floor = 0.00
+            call_floor = 0.00 + advisor_profile.postflop_call_shift
             if combo_draw:
                 call_floor -= 0.04
             elif open_ended or flush_draw:
@@ -1417,7 +1625,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
             if bet_pressure >= 0.60:
                 call_floor += 0.03
 
-            semi_bluff_raise_threshold = 0.20
+            semi_bluff_raise_threshold = 0.20 + advisor_profile.postflop_bluff_shift
             if combo_draw:
                 semi_bluff_raise_threshold -= 0.03
             if villain_type in {"calling_station", "passive_fish"}:
@@ -1466,13 +1674,13 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     raise_target = None
     selected_amount_label = None
     if action_kind in {"raise", "bet"} and amount_button_labels:
-        raise_target = _postflop_raise_target(table_state, decision_score, street)
-        selected_amount_label = _select_amount_button(
+        raise_target = _postflop_raise_target(table_state, decision_score, street, advisor_profile)
+        selected_amount = _select_amount_button(
             [{"label": label} for label in amount_button_labels],
             raise_target,
             table_state,
         )
-        selected_amount_label = selected_amount_label.get("label") if selected_amount_label else None
+        selected_amount_label = selected_amount.get("label") if selected_amount else None
 
     confidence = _clamp(0.5 + abs(decision_score) * 2.2, 0.0, 1.0)
 
@@ -1481,7 +1689,7 @@ def decide_postflop_action(table_state: Dict) -> Dict:
         f"raw={raw_edge:+.2f} adj={exploit_adjustment:+.2f} score={decision_score:+.2f} "
         f"hand={hand_class} pair={pair_type} bucket={hand_strength_bucket} "
         f"draws=fd:{int(flush_draw)} oesd:{int(open_ended)} gs:{int(gutshot)} "
-        f"villain={villain_type}"
+        f"villain={villain_type} profile={advisor_profile.name}"
     )
 
     return {
@@ -1490,6 +1698,11 @@ def decide_postflop_action(table_state: Dict) -> Dict:
         "reason": reason,
         "debug": {
             "street": street,
+            "advisor_profile": advisor_profile.name,
+            "game_type": advisor_profile.game_type,
+            "play_style": advisor_profile.play_style,
+            "stack_zone": stack_zone,
+            "effective_bb": round(effective_bb, 4),
             "equity": round(equity, 4),
             "required_equity": round(required_equity, 4),
             "raw_edge": round(raw_edge, 4),
@@ -1521,14 +1734,27 @@ def decide_postflop_action(table_state: Dict) -> Dict:
     }
 
 
-def decide_action(table_state: Dict) -> Dict:
+def decide_action(table_state: Dict, advisor_profile: Optional[AdvisorProfileConfig] = None) -> Dict:
     street = str(table_state.get("street", "preflop")).lower()
+    advisor_profile = advisor_profile or get_advisor_profile()
+
     if street == "preflop":
-        return decide_preflop_action(table_state)
-    return decide_postflop_action(table_state)
+        return decide_preflop_action(table_state, advisor_profile=advisor_profile)
+    return decide_postflop_action(table_state, advisor_profile=advisor_profile)
 
 
-def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_blind=None, seat_to_position=None, active_seats=None):
+def choose_action_with_rules(
+    table,
+    hero_equity=None,
+    hero_position=None,
+    big_blind=None,
+    seat_to_position=None,
+    active_seats=None,
+    advisor_profile: Optional[AdvisorProfileConfig] = None,
+    profile_name: Optional[str] = None,
+    game_type: str = "cash",
+    play_style: str = "mixed",
+):
     if not table.available_actions:
         return {
             "selected_action": None,
@@ -1536,6 +1762,7 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
             "reason": "Nessuna azione disponibile.",
             "debug": {},
             "table_state": {},
+            "advisor_profile": None,
         }
 
     villain = _get_primary_villain(table, active_seats)
@@ -1548,7 +1775,14 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
         seat_to_position=seat_to_position,
         active_seats=active_seats,
     )
-    decision = decide_action(table_state)
+
+    advisor_profile = advisor_profile or get_advisor_profile(
+        profile_name=profile_name,
+        game_type=game_type,
+        play_style=play_style,
+    )
+
+    decision = decide_action(table_state, advisor_profile=advisor_profile)
     selected_action = _find_action(table.available_actions, decision["action"])
 
     protected_playable = (
@@ -1589,4 +1823,5 @@ def choose_action_with_rules(table, hero_equity=None, hero_position=None, big_bl
         "reason": decision["reason"],
         "debug": decision["debug"],
         "table_state": table_state,
+        "advisor_profile": advisor_profile.name,
     }

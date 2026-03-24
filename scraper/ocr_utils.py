@@ -74,7 +74,7 @@ def parse_amount(text: str) -> float:
 
     text = text.replace(",", ".")
     # per tornei 
-    IS_TORNEY = False  # se True, considera che i numeri OCR siano formattati senza separatore decimale e con eventuali migliaia separati da punti (es. 1.234 per mille e 2,10 per due euro e dieci centesimi)
+    IS_TORNEY = True  # se True, considera che i numeri OCR siano formattati senza separatore decimale e con eventuali migliaia separati da punti (es. 1.234 per mille e 2,10 per due euro e dieci centesimi)
     if IS_TORNEY == True:
         text = text.replace(",", "")
         text = text.replace(".", "")

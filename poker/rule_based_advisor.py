@@ -11,13 +11,12 @@ _HAND_EVALUATOR = Evaluator()
 @dataclass
 class AdvisorProfileConfig:
     name: str = "cash_mixed"
-    game_type: str = "cash"          # cash | tournament
-    play_style: str = "mixed"        # aggressive | conservative | mixed
+    game_type: str = "cash"
+    play_style: str = "mixed"
 
     short_stack_bb: float = 15.0
     medium_stack_bb: float = 40.0
 
-    # PREFLOP
     preflop_base_shift: float = 0.0
     preflop_open_shift: float = 0.0
     preflop_call_shift: float = 0.0
@@ -26,7 +25,6 @@ class AdvisorProfileConfig:
     preflop_short_stack_tightening: float = 0.0
     preflop_deep_stack_loosening: float = 0.0
 
-    # POSTFLOP
     postflop_base_shift: float = 0.0
     postflop_raise_shift: float = 0.0
     postflop_call_shift: float = 0.0
@@ -34,11 +32,9 @@ class AdvisorProfileConfig:
     postflop_draw_shift: float = 0.0
     postflop_thin_value_shift: float = 0.0
 
-    # TORNEO / CASH
     tournament_survival_bias: float = 0.0
     cash_ev_bias: float = 0.0
 
-    # SIZE
     open_size_mult: float = 1.0
     iso_size_mult: float = 1.0
     raise_size_mult: float = 1.0
@@ -1175,6 +1171,34 @@ def _analyze_postflop_hand(hero_cards: List[str], board_cards: List[str]) -> Dic
     result["combo_draw"] = flush_draw and (result["open_ended"] or result["gutshot"])
     result["strong_draw"] = flush_draw or result["open_ended"]
 
+    hero_set = set(hero_ranks)
+    board_set = set(board_ranks)
+
+    board_pairs = sorted(
+        [rank for rank, count in board_rank_counts.items() if count >= 2],
+        reverse=True,
+    )
+    board_trips = sorted(
+        [rank for rank, count in board_rank_counts.items() if count >= 3],
+        reverse=True,
+    )
+
+    if class_name == "Two Pair" and len(board_pairs) >= 2:
+        if not (hero_set & board_set):
+            result["pair_type"] = "board_two_pair"
+            result["hand_strength_bucket"] = "weak"
+            result["showdown_value"] = True
+            return result
+
+    if class_name == "Three of a Kind" and board_trips:
+        board_trip_rank = board_trips[0]
+        if board_trip_rank not in hero_set:
+            result["pair_type"] = "board_trips"
+            result["hero_pair_rank"] = board_trip_rank
+            result["hand_strength_bucket"] = "weak"
+            result["showdown_value"] = True
+            return result
+
     if class_name in {"Straight Flush", "Four of a Kind", "Full House", "Flush", "Straight"}:
         result["hand_strength_bucket"] = "monster"
         result["showdown_value"] = True
@@ -1189,23 +1213,61 @@ def _analyze_postflop_hand(hero_cards: List[str], board_cards: List[str]) -> Dic
             result["hero_pair_rank"] = hero_pair_ranks[0]
             result["hand_strength_bucket"] = "monster"
         else:
-            result["pair_type"] = "trips"
-            result["hero_pair_rank"] = max(trip_ranks) if trip_ranks else 0
-            result["hand_strength_bucket"] = "strong"
+            paired_hero_ranks = [rank for rank in hero_ranks if rank in board_rank_counts]
+            if paired_hero_ranks:
+                result["pair_type"] = "trips"
+                result["hero_pair_rank"] = max(paired_hero_ranks)
+                result["hand_strength_bucket"] = "strong"
+            else:
+                result["pair_type"] = "board_trips"
+                result["hero_pair_rank"] = max(trip_ranks) if trip_ranks else 0
+                result["hand_strength_bucket"] = "weak"
+
         result["showdown_value"] = True
         return result
 
     if class_name == "Two Pair":
-        hero_set = set(hero_ranks)
-        board_set = set(board_ranks)
         shared_pairs = hero_set.intersection(board_set)
 
         if len(shared_pairs) >= 2:
             result["pair_type"] = "top_two" if max(shared_pairs) == top_board_rank else "two_pair"
-        else:
-            result["pair_type"] = "two_pair"
+            result["hand_strength_bucket"] = "strong"
+            result["showdown_value"] = True
+            return result
 
-        result["hand_strength_bucket"] = "strong"
+        if len(hero_rank_counts) == 1:
+            hero_pair_rank = next(iter(hero_rank_counts.keys()))
+            result["hero_pair_rank"] = hero_pair_rank
+
+            if board_pairs:
+                board_pair_rank = board_pairs[0]
+                if hero_pair_rank > board_pair_rank:
+                    result["pair_type"] = "overpair_plus_board_pair"
+                    result["hand_strength_bucket"] = "medium"
+                else:
+                    result["pair_type"] = "underpair_plus_board_pair"
+                    result["hand_strength_bucket"] = "medium"
+                result["showdown_value"] = True
+                return result
+
+        if len(shared_pairs) == 1:
+            shared_rank = max(shared_pairs)
+            result["hero_pair_rank"] = shared_rank
+
+            if shared_rank == top_board_rank:
+                result["pair_type"] = "top_two"
+                result["hand_strength_bucket"] = "strong"
+            elif shared_rank == result["second_board_rank"]:
+                result["pair_type"] = "middle_two"
+                result["hand_strength_bucket"] = "medium_strong"
+            else:
+                result["pair_type"] = "weak_two_pair"
+                result["hand_strength_bucket"] = "medium"
+            result["showdown_value"] = True
+            return result
+
+        result["pair_type"] = "two_pair"
+        result["hand_strength_bucket"] = "medium"
         result["showdown_value"] = True
         return result
 
@@ -1215,6 +1277,12 @@ def _analyze_postflop_hand(hero_cards: List[str], board_cards: List[str]) -> Dic
         if len(hero_rank_counts) == 1:
             hero_pair_rank = next(iter(hero_rank_counts.keys()))
             result["hero_pair_rank"] = hero_pair_rank
+
+            if any(count >= 2 for count in board_rank_counts.values()):
+                result["pair_type"] = "board_pair"
+                result["hand_strength_bucket"] = "weak"
+                result["showdown_value"] = result["overcards_in_hand"] >= 1
+                return result
 
             if hero_pair_rank > top_board_rank:
                 result["pair_type"] = "overpair"
@@ -1346,6 +1414,9 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     combo_draw = hand_analysis["combo_draw"]
     strong_draw = hand_analysis["strong_draw"]
     showdown_value = hand_analysis["showdown_value"]
+
+    if pair_type in {"board_pair", "board_two_pair", "board_trips"}:
+        hand_strength_bucket = "weak"
 
     exploit_adjustment = 0.0
 

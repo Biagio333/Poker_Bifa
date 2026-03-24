@@ -358,6 +358,9 @@ def main():
                                 big_blind=big_blind,
                                 seat_to_position=seat_to_pos,
                                 active_seats=active_seats,
+                                game_type="tournament",
+                                play_style="conservative",
+
                             )
                         except Exception as exc:
                             last_ollama_decision = {

@@ -22,26 +22,23 @@ import subprocess
 import random
 from difflib import SequenceMatcher
 
-class SCR_TYPE(Enum):
-    ADB = 0
-    SCRCPY = 1
-    IMMAGE_SAVED = 2
+from poker import Impostazioni as cfg
 
-IS_TORNEY = False  # se True, considera che i numeri OCR siano formattati senza separatore decimale e con eventuali migliaia separati da punti (es. 1.234 per mille e 2,10 per due euro e dieci centesimi)
-SCRENSHOT_TYPE = SCR_TYPE.ADB
-AUTO_PRESS_BUTTON = True
-SAVE_SCREENSHOT = False
-SAVE_SCREENSHOT_DIR = "immage"
-DEBUG_START_FRAME_NUMBER = 0
-DISPLAY_SCALE = 0.8
-DISPLAY_PREVIEW = False
-PLAYER_STATS_DB_PATH = "data/player_stats.db"
-RED_TEXT = "\033[91m"
-RESET_TEXT = "\033[0m"
+SCR_TYPE = cfg.SCR_TYPE
+SCRENSHOT_TYPE = cfg.SCRENSHOT_TYPE
+AUTO_PRESS_BUTTON = cfg.AUTO_PRESS_BUTTON
+SAVE_SCREENSHOT = cfg.SAVE_SCREENSHOT
+SAVE_SCREENSHOT_DIR = cfg.SAVE_SCREENSHOT_DIR
+DEBUG_START_FRAME_NUMBER = cfg.DEBUG_START_FRAME_NUMBER
+DISPLAY_SCALE = cfg.DISPLAY_SCALE
+DISPLAY_PREVIEW = cfg.DISPLAY_PREVIEW
+PLAYER_STATS_DB_PATH = cfg.PLAYER_STATS_DB_PATH
+RED_TEXT = cfg.RED_TEXT
+RESET_TEXT = cfg.RESET_TEXT
+table_name = cfg.table_name
+HALTEZZA_FOLD = cfg.HALTEZZA_FOLD
 
-table_name = "Poker_star_oppo_1080x2400"
-HALTEZZA_FOLD = 36  # oppo
-#HALTEZZA_FOLD = 30  # A53
+
 
 counter_press_button = 3
 
@@ -358,8 +355,8 @@ def main():
                                 big_blind=big_blind,
                                 seat_to_position=seat_to_pos,
                                 active_seats=active_seats,
-                                game_type="tournament",
-                                play_style="conservative",
+                                game_type= cfg.game_type_set,
+                                play_style=cfg.play_style_set,
 
                             )
                         except Exception as exc:

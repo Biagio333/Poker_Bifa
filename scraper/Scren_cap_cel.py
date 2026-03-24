@@ -70,7 +70,7 @@ class OCRReader:
                     self.frames.append((img_full, img, self.frame_id))
                     self.frame_id += 1
 
-                time.sleep(1.5)
+                time.sleep(0.5)
 
             except Exception as e:
                 print("Screenshot thread error:", e)

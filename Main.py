@@ -146,7 +146,6 @@ def main():
     last_action_labels = None
     last_ollama_decision = None
     last_sent_action_labels = None
-    last_pressed_action_labels = None
     old_current_action_labels = None
     wait_press_button = False
     street_for_ocr_actions = "preflop"
@@ -349,7 +348,7 @@ def main():
                     if not current_action_labels:
                         last_action_labels = None
                         last_ollama_decision = None
-                        last_pressed_action_labels = None
+
                     else :
                         try:
                             last_ollama_decision = choose_action_with_rules(
@@ -417,7 +416,7 @@ def main():
                                 SCRENSHOT_TYPE == SCR_TYPE.ADB
                                 and isinstance(selected_x, int)
                                 and isinstance(selected_y, int)
-                                and current_action_labels != last_pressed_action_labels
+                                
                             ):
                                 try:
                                     if isinstance(amount_x, int) and isinstance(amount_y, int):
@@ -428,7 +427,7 @@ def main():
 
                                     if AUTO_PRESS_BUTTON:
                                         adb_tap(selected_x, selected_y)
-                                        last_pressed_action_labels = current_action_labels
+                                        
                                         print(f"{RED_TEXT}ADB tap eseguito su ({selected_x}, {selected_y}){RESET_TEXT}")
                                 except Exception as exc:
                                     print(f"{RED_TEXT}ADB tap fallito: {exc}{RESET_TEXT}")
@@ -454,8 +453,8 @@ def main():
             if counter_press_button < 0 or ratio < 0.8:
                 wait_press_button = False
                 table.available_actions =[]
-                old_current_action_labels =False
-                last_pressed_action_labels = None
+                old_current_action_labels =None
+
 
     cv2.destroyAllWindows()
 

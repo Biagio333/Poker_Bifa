@@ -21,6 +21,7 @@ class OCRReader:
         self.gray = gray
         self.min_score = min_score
         self.engine_name = (engine_name or cfg.OCR_ENGINE).strip().lower()
+        self._paddle_debug_dumped = False
         self.engine = self._create_engine()
 
         self.running = False
@@ -48,6 +49,7 @@ class OCRReader:
 
     def _build_paddleocr_kwargs(self, paddle_ocr_class):
         use_gpu = self._is_paddle_gpu_available()
+        device = "gpu" if use_gpu else "cpu"
         kwargs = {}
 
         try:
@@ -55,17 +57,27 @@ class OCRReader:
         except (TypeError, ValueError):
             parameters = {}
 
-        if "use_angle_cls" in parameters:
-            kwargs["use_angle_cls"] = False
-        if "lang" in parameters:
-            kwargs["lang"] = "en"
-        if "use_gpu" in parameters:
-            kwargs["use_gpu"] = use_gpu
-        elif "device" in parameters:
-            kwargs["device"] = "gpu" if use_gpu else "cpu"
+        defaults = {
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+            "lang": "en",
+            "device": device,
+        }
 
-        backend_name = "CUDA" if use_gpu else "CPU"
-        print(f"PaddleOCR avviato con {backend_name}")
+        for key, value in defaults.items():
+            if key in parameters:
+                kwargs[key] = value
+
+        if "device" not in kwargs:
+            if "use_gpu" in parameters:
+                kwargs["use_gpu"] = use_gpu
+            if "lang" in parameters and "lang" not in kwargs:
+                kwargs["lang"] = "en"
+            if "use_angle_cls" in parameters:
+                kwargs["use_angle_cls"] = False
+
+        print(f"PaddleOCR avviato con {'CUDA' if use_gpu else 'CPU'}")
         return kwargs
 
     def _create_engine(self):
@@ -104,11 +116,11 @@ class OCRReader:
                     err = result.stderr.decode(errors="ignore").strip()
                     if err:
                         print("ADB error:", err)
-                    time.sleep(0.2)
+                    time.sleep(2.0)
                     continue
 
                 if not result.stdout:
-                    time.sleep(0.2)
+                    time.sleep(2.0)
                     continue
 
                 data = result.stdout.replace(b"\r\r\n", b"\n")
@@ -138,7 +150,7 @@ class OCRReader:
                     self.frames.append((img_full, img, self.frame_id))
                     self.frame_id += 1
 
-                time.sleep(0.5)
+                time.sleep(1)
 
             except Exception as e:
                 print("Screenshot thread error:", e)
@@ -183,20 +195,88 @@ class OCRReader:
         with self.lock:
             return len(self.frames)
 
-    def _normalize_box(self, box):
+    def _score_points_against_image(self, points, image_shape):
+        img_h, img_w = image_shape[:2]
+        penalty = 0.0
+        for x, y in points:
+            if x < 0:
+                penalty += -x
+            elif x > img_w:
+                penalty += x - img_w
+
+            if y < 0:
+                penalty += -y
+            elif y > img_h:
+                penalty += y - img_h
+
+        return penalty
+
+    def _order_box_points(self, points):
+        if len(points) != 4:
+            return []
+
+        pts = np.array(points, dtype=np.float32)
+        ordered = np.zeros((4, 2), dtype=np.float32)
+
+        sums = pts.sum(axis=1)
+        diffs = np.diff(pts, axis=1).reshape(-1)
+
+        ordered[0] = pts[np.argmin(sums)]
+        ordered[2] = pts[np.argmax(sums)]
+        ordered[1] = pts[np.argmin(diffs)]
+        ordered[3] = pts[np.argmax(diffs)]
+
+        return ordered.tolist()
+
+    def _normalize_box(self, box, image_shape=None):
         if box is None:
             return []
 
-        normalized = []
+        points = []
         for point in box:
-            if point is None or len(point) < 2:
+            if point is None:
                 continue
-            normalized.append([float(point[0]), float(point[1])])
 
-        return normalized
+            if hasattr(point, "tolist"):
+                point = point.tolist()
 
-    def _normalize_ocr_item(self, box, text, score):
-        normalized_box = self._normalize_box(box)
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+
+            x = float(point[0])
+            y = float(point[1])
+            points.append([x, y])
+
+        if len(points) != 4:
+            return []
+
+        if image_shape is not None:
+            img_h, img_w = image_shape[:2]
+
+            max_x = max(point[0] for point in points)
+            max_y = max(point[1] for point in points)
+            if max_x <= 1.5 and max_y <= 1.5:
+                points = [[point[0] * img_w, point[1] * img_h] for point in points]
+
+            swapped_points = [[point[1], point[0]] for point in points]
+            direct_penalty = self._score_points_against_image(points, image_shape)
+            swapped_penalty = self._score_points_against_image(swapped_points, image_shape)
+            if swapped_penalty + 1e-6 < direct_penalty:
+                points = swapped_points
+
+            points = [
+                [min(max(point[0], 0.0), float(img_w - 1)), min(max(point[1], 0.0), float(img_h - 1))]
+                for point in points
+            ]
+
+        ordered_points = self._order_box_points(points)
+        if len(ordered_points) != 4:
+            return []
+
+        return ordered_points
+
+    def _normalize_ocr_item(self, box, text, score, image_shape=None):
+        normalized_box = self._normalize_box(box, image_shape=image_shape)
         if len(normalized_box) < 4:
             return None
 
@@ -219,7 +299,7 @@ class OCRReader:
         texts = []
         if result:
             for box, text, score in result:
-                normalized_item = self._normalize_ocr_item(box, text, score)
+                normalized_item = self._normalize_ocr_item(box, text, score, image_shape=img.shape)
                 if normalized_item is None or normalized_item["score"] < self.min_score:
                     continue
                 texts.append(normalized_item)
@@ -235,9 +315,11 @@ class OCRReader:
 
         if isinstance(result, list) and result:
             first_item = result[0]
-            if isinstance(first_item, list) and first_item and isinstance(first_item[0], list):
+            if isinstance(first_item, dict):
+                return [first_item]
+            if isinstance(first_item, list):
                 return first_item
-            return result
+            return [first_item]
 
         return []
 
@@ -266,37 +348,50 @@ class OCRReader:
                     continue
                 yield box, text_info[0], text_info[1]
 
+    def _debug_paddle_result_once(self, result, image_shape):
+        if self._paddle_debug_dumped:
+            return
+
+        self._paddle_debug_dumped = True
+        print(f"Paddle debug image_shape={image_shape}")
+        print(f"Paddle debug result_type={type(result).__name__}")
+
+        if isinstance(result, list) and result:
+            first_item = result[0]
+            print(f"Paddle debug first_item_type={type(first_item).__name__}")
+            if isinstance(first_item, dict):
+                print(f"Paddle debug first_item_keys={list(first_item.keys())}")
+                boxes = first_item.get("dt_polys") or first_item.get("boxes") or first_item.get("polys") or []
+                if len(boxes) > 0:
+                    print(f"Paddle debug first_box={boxes[0]}")
+            else:
+                print(f"Paddle debug first_item={first_item}")
+        elif isinstance(result, dict):
+            print(f"Paddle debug result_keys={list(result.keys())}")
+            boxes = result.get("dt_polys") or result.get("boxes") or result.get("polys") or []
+            if len(boxes) > 0:
+                print(f"Paddle debug first_box={boxes[0]}")
+        else:
+            print(f"Paddle debug result={result}")
+
     def _call_paddleocr(self, img):
-        ocr_method = getattr(self.engine, "ocr", None)
-        if callable(ocr_method):
-            try:
-                parameters = inspect.signature(ocr_method).parameters
-            except (TypeError, ValueError):
-                parameters = {}
-
-            kwargs = {}
-            if "cls" in parameters:
-                kwargs["cls"] = False
-
-            try:
-                return ocr_method(img, **kwargs)
-            except TypeError:
-                if kwargs:
-                    return ocr_method(img)
-                raise
-
         predict_method = getattr(self.engine, "predict", None)
         if callable(predict_method):
             return predict_method(img)
+
+        ocr_method = getattr(self.engine, "ocr", None)
+        if callable(ocr_method):
+            return ocr_method(img)
 
         raise RuntimeError("PaddleOCR non espone un metodo OCR compatibile.")
 
     def _run_paddleocr(self, img, fallback_time):
         result = self._call_paddleocr(img)
+        self._debug_paddle_result_once(result, img.shape)
         texts = []
 
         for box, text, score in self._iter_paddle_items(result):
-            normalized_item = self._normalize_ocr_item(box, text, score)
+            normalized_item = self._normalize_ocr_item(box, text, score, image_shape=img.shape)
             if normalized_item is None or normalized_item["score"] < self.min_score:
                 continue
 
@@ -321,13 +416,23 @@ class OCRReader:
 
     def draw_results(self, img, texts, ocr_time):
         out = img.copy()
+        img_h, img_w = out.shape[:2]
 
         for item in texts:
             box = item["box"]
             text = item["text"]
             score = item["score"]
 
-            pts = np.array(box, dtype=np.int32)
+            pts = np.array([
+                [
+                    int(min(max(round(point[0]), 0), img_w - 1)),
+                    int(min(max(round(point[1]), 0), img_h - 1)),
+                ]
+                for point in box
+            ], dtype=np.int32)
+            if len(pts) != 4:
+                continue
+
             cv2.polylines(out, [pts], True, (0, 255, 0), 2)
 
             x, y = pts[0]

@@ -80,6 +80,19 @@ def _generate_random_hand(exclude_cards):
     return available[:2]
 
 
+def _normalize_action_label(label):
+    return " ".join((label or "").strip().lower().split())
+
+
+def _find_action_by_label_fragment(actions, fragment):
+    fragment = _normalize_action_label(fragment)
+    for action in actions:
+        label = _normalize_action_label(action.get("label", ""))
+        if fragment and fragment in label:
+            return action
+    return None
+
+
 PLAYER_TYPES_BY_SEAT = {
     0: "aggressive",
     1: "aggressive",
@@ -146,6 +159,9 @@ def main():
     old_current_action_labels = None
     wait_press_button = False
     street_for_ocr_actions = "preflop"
+    rejoin_button_signature = None
+    rejoin_button_deadline = None
+    rejoin_button_clicked = False
 
     table_hero_cards_old = []
     while True:
@@ -210,14 +226,14 @@ def main():
             if key == ord("q"):
                 break
 
-        img_for_ocr = img_search.apply_ocr_mask(img)
+        img_for_ocr = img
 
         t0 = time.time()
         ocr_results, ocr_time = ocr.run_ocr(img_for_ocr)
         elapsed_ocr = time.time() - t0
 
 
-        img_populated = ocr.draw_results (img, ocr_results, 0)  # disegna solo i risultati OCR senza testo per debug
+        img_populated = ocr.draw_results(img_for_ocr, ocr_results, 0)  # disegna i risultati OCR sulla stessa immagine usata dall'OCR
         server.update_frame(img_populated)
         #reader.table_reset(table)
 
@@ -261,6 +277,56 @@ def main():
                     action.get("label", "").strip().lower()
                     for action in table.available_actions
                 )
+
+        rejoin_action = _find_action_by_label_fragment(table.available_actions, "torna a giocare")
+        if rejoin_action is None:
+            rejoin_button_signature = None
+            rejoin_button_deadline = None
+            rejoin_button_clicked = False
+        else:
+            rejoin_click_point = rejoin_action.get("click_point", {})
+            rejoin_rect = rejoin_action.get("ocr_rect", {})
+            rejoin_signature = (
+                _normalize_action_label(rejoin_action.get("label", "")),
+                rejoin_rect.get("x"),
+                rejoin_rect.get("y"),
+                rejoin_rect.get("w"),
+                rejoin_rect.get("h"),
+            )
+            now = time.time()
+            if rejoin_signature != rejoin_button_signature:
+                rejoin_button_signature = rejoin_signature
+                rejoin_button_deadline = now + random.uniform(8.0, 12.0)
+                rejoin_button_clicked = False
+                print(
+                    f"Pulsante 'torna a giocare' rilevato: tap tra circa "
+                    f"{rejoin_button_deadline - now:.1f} secondi"
+                )
+            elif not rejoin_button_clicked and rejoin_button_deadline is not None:
+                remaining = rejoin_button_deadline - now
+                if remaining <= 0:
+                    tap_x = rejoin_click_point.get("x")
+                    tap_y = rejoin_click_point.get("y")
+                    if isinstance(tap_x, (int, float)) and isinstance(tap_y, (int, float)):
+                        tap_x = int(round(tap_x / DISPLAY_SCALE))
+                        tap_y = int(round(tap_y / DISPLAY_SCALE))
+                        if SCRENSHOT_TYPE == SCR_TYPE.ADB:
+                            try:
+                                adb_tap(tap_x, tap_y)
+                                rejoin_button_clicked = True
+                                print(
+                                    f"{RED_TEXT}ADB tap 'torna a giocare' eseguito su "
+                                    f"({tap_x}, {tap_y}){RESET_TEXT}"
+                                )
+                            except Exception as exc:
+                                print(f"{RED_TEXT}ADB tap 'torna a giocare' fallito: {exc}{RESET_TEXT}")
+                        else:
+                            rejoin_button_clicked = True
+                    else:
+                        print(f"{RED_TEXT}Click point non valido per 'torna a giocare'{RESET_TEXT}")
+                else:
+                    print(f"Attesa 'torna a giocare': {remaining:.1f}s")
+
         dealer = img_search.find_dealer_button(img,threshold=0.6)
         occupied_seats = table.get_occupied_seats()
         posizioni = img_search.get_player_positions(dealer, occupied_seats=occupied_seats)

@@ -7,8 +7,8 @@ class SCR_TYPE(Enum):
     IMMAGE_SAVED = 2
 
 
-SCRENSHOT_TYPE = SCR_TYPE.IMMAGE_SAVED
-AUTO_PRESS_BUTTON = False 
+SCRENSHOT_TYPE = SCR_TYPE.ADB
+AUTO_PRESS_BUTTON = True 
 SAVE_SCREENSHOT = False
 SAVE_SCREENSHOT_DIR = "immage"
 DEBUG_START_FRAME_NUMBER = 0
@@ -23,7 +23,7 @@ table_name = "Poker_star_oppo_1080x2400"
 HALTEZZA_FOLD = 36  # oppo
 #HALTEZZA_FOLD = 30  # A53
 
-game_type_set = "tournament"
+game_type_set = "cash"  # "tournament"
 play_style_set = "aggressive"
 
 if game_type_set == "tournament":

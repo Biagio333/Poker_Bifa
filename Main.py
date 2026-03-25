@@ -226,7 +226,7 @@ def main():
             if key == ord("q"):
                 break
 
-        img_for_ocr = img
+        img_for_ocr = img_search.apply_ocr_mask(img)
 
         t0 = time.time()
         ocr_results, ocr_time = ocr.run_ocr(img_for_ocr)

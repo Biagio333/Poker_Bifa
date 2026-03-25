@@ -3,6 +3,9 @@ import os
 # PaddleOCR può fare controlli remoti e inizializzare plugin Qt non adatti ad ambienti headless.
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Evita il path oneDNN/PIR che in alcune build CPU di Paddle genera NotImplementedError.
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_pir_api", "0")
 
 import subprocess
 import inspect
@@ -376,12 +379,24 @@ class OCRReader:
 
     def _call_paddleocr(self, img):
         predict_method = getattr(self.engine, "predict", None)
-        if callable(predict_method):
-            return predict_method(img)
-
         ocr_method = getattr(self.engine, "ocr", None)
+
+        if callable(predict_method):
+            try:
+                return predict_method(img)
+            except NotImplementedError as exc:
+                message = str(exc)
+                unsupported_pir = "ConvertPirAttribute2RuntimeAttribute" in message
+                if not unsupported_pir or not callable(ocr_method):
+                    raise
+
+                print("PaddleOCR predict() ha fallito sul runtime oneDNN/PIR; provo fallback su ocr().")
+
         if callable(ocr_method):
-            return ocr_method(img)
+            try:
+                return ocr_method(img, cls=False)
+            except TypeError:
+                return ocr_method(img)
 
         raise RuntimeError("PaddleOCR non espone un metodo OCR compatibile.")
 

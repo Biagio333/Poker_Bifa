@@ -17,14 +17,15 @@ DISPLAY_PREVIEW = False
 PLAYER_STATS_DB_PATH = "data/player_stats.db"
 RED_TEXT = "\033[91m"
 RESET_TEXT = "\033[0m"
-OCR_ENGINE = "paddleocr"  # "rapidocr" oppure "paddleocr"
+OCR_ENGINE = "rapidocr"  # "rapidocr" oppure "paddleocr"
 
 table_name = "Poker_star_oppo_1080x2400"
 HALTEZZA_FOLD = 36  # oppo
 #HALTEZZA_FOLD = 30  # A53
 
-game_type_set = "cash"  # "tournament"
-play_style_set = "aggressive"
+game_type_set = "tournament"  # "tournament"  "cash"
+
+play_style_set = "aggressive"    #"mixed"   "conservative" "aggressive"
 
 if game_type_set == "tournament":
     IS_TORNEY = True

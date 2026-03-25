@@ -185,6 +185,56 @@ def _pct(count, total):
     return count / total
 
 
+def get_multiway_factor(players_in_hand: int) -> float:
+    if players_in_hand <= 2:
+        return 1.0
+    elif players_in_hand == 3:
+        return 0.8
+    elif players_in_hand == 4:
+        return 0.65
+    else:
+        return 0.5
+
+
+def get_opponent_pressure_factor(
+    street: str,
+    amount_to_call: float,
+    pot: float,
+    is_raise: bool = False,
+    is_reraise: bool = False,
+    is_allin: bool = False,
+) -> float:
+    if pot <= 0:
+        pot = 0.01
+
+    pressure = amount_to_call / pot
+
+    factor = 1.0
+
+    if pressure >= 0.25:
+        factor += 0.2
+    if pressure >= 0.5:
+        factor += 0.35
+    if pressure >= 0.75:
+        factor += 0.5
+    if pressure >= 1.0:
+        factor += 0.7
+
+    if is_raise:
+        factor += 0.2
+    if is_reraise:
+        factor += 0.45
+    if is_allin:
+        factor += 0.8
+
+    if street == "turn":
+        factor += 0.15
+    elif street == "river":
+        factor += 0.3
+
+    return factor
+
+
 def _normalize_text(text):
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
@@ -1344,6 +1394,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     street = str(table_state.get("street", "preflop")).lower()
     hero_position = str(table_state.get("hero_position", "")).lower()
     hero_stack = _safe_float(table_state.get("hero_stack", 0.0))
+    hero_bet = _safe_float(table_state.get("hero_bet", 0.0))
     pot_size = _safe_float(table_state.get("pot_size", 0.0))
     to_call = _safe_float(table_state.get("to_call", 0.0))
     min_raise = _safe_float(table_state.get("min_raise", 0.0))
@@ -1353,6 +1404,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     villain_type = str(table_state.get("villain_type", "unknown")).lower()
     villain_stack = _safe_float(table_state.get("villain_stack", 0.0))
     villain_bet = _safe_float(table_state.get("villain_bet", 0.0))
+    multiway_factor = get_multiway_factor(players_in_hand)
 
     available_action_labels = [str(label) for label in table_state.get("available_actions", [])]
     amount_button_labels = [str(label) for label in table_state.get("amount_button_labels", [])]
@@ -1382,23 +1434,49 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     three_bet_pct = _pct(three_bet_count, three_bet_opp)
     fold_to_cbet_pct = _pct(fold_to_cbet_count, fold_to_cbet_opp)
 
-    required_equity = 0.0
-    if to_call > 0:
-        required_equity = to_call / max(pot_size + to_call, 1e-9)
-
-    raw_edge = equity - required_equity
-
     sample_weight = _clamp(hands_seen / 40.0, 0.15, 1.0)
     effective_stack = min(hero_stack, villain_stack) if villain_stack > 0 else hero_stack
     spr = effective_stack / max(pot_size, big_blind, 1e-9)
     effective_bb = _effective_bb_from_state(table_state)
     stack_zone = _stack_zone(effective_bb, advisor_profile)
 
+    pot_reference = max(pot_size, big_blind, 0.01)
+    raise_size = max(villain_bet - hero_bet, to_call, 0.0)
+    raise_size_ratio = raise_size / pot_reference
     bet_pressure = (
         villain_bet / max(pot_size, big_blind, 1e-9)
         if villain_bet > 0
         else to_call / max(pot_size, big_blind, 1e-9)
     )
+
+    # Opponent pressure: size, raise/reraise texture and street all increase the
+    # price of continuing, especially when we face a large turn/river action.
+    is_raise = to_call > 0 and villain_bet > hero_bet
+    is_reraise = is_raise and (raise_size_ratio >= 0.75 or to_call >= pot_reference * 0.75)
+    is_allin = (villain_stack <= big_blind * 0.5 and villain_bet > 0) or (
+        to_call >= max(hero_stack * 0.75, pot_reference * 1.25)
+    )
+    pressure_factor = get_opponent_pressure_factor(
+        street,
+        to_call,
+        pot_reference,
+        is_raise=is_raise,
+        is_reraise=is_reraise,
+        is_allin=is_allin,
+    )
+    if raise_size_ratio >= 0.75:
+        pressure_factor += 0.15
+    if raise_size_ratio >= 1.0:
+        pressure_factor += 0.2
+
+    base_equity_threshold = 0.0
+    if to_call > 0:
+        base_equity_threshold = to_call / max(pot_size + to_call, 1e-9)
+    required_equity = base_equity_threshold / max(multiway_factor, 1e-9)
+    required_equity *= pressure_factor
+    required_equity = _clamp(required_equity, 0.0, 0.98)
+
+    raw_edge = equity - required_equity
 
     hand_analysis = _analyze_postflop_hand(
         table_state.get("hero_cards", []),
@@ -1417,6 +1495,40 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
 
     if pair_type in {"board_pair", "board_two_pair", "board_trips"}:
         hand_strength_bucket = "weak"
+
+    relative_hand_category = hand_strength_bucket
+    if pair_type == "top_pair" and hand_strength_bucket == "medium":
+        relative_hand_category = "top_pair_weak"
+    elif pair_type == "middle_pair":
+        relative_hand_category = "second_pair"
+    elif pair_type in {"bottom_pair", "underpair"}:
+        relative_hand_category = "one_pair_weak"
+
+    vulnerable_medium_hand = relative_hand_category in {
+        "medium",
+        "one_pair_weak",
+        "second_pair",
+        "top_pair_weak",
+    }
+
+    # Medium hand protection: one-pair and medium-strength holdings should stop
+    # paying off when the line from villain becomes very expensive.
+    prefer_fold = vulnerable_medium_hand and pressure_factor >= 1.5
+    force_defensive_fold = vulnerable_medium_hand and pressure_factor >= 1.8
+
+    # Tighter turn/river defense: we remove light continues much earlier once big
+    # aggression appears on later streets.
+    if street in {"turn", "river"} and pressure_factor >= 1.5 and hand_strength_bucket in {"medium", "draw", "weak"}:
+        prefer_fold = True
+    if street in {"turn", "river"} and pressure_factor >= 1.8 and hand_strength_bucket in {"medium", "draw", "weak"}:
+        force_defensive_fold = True
+
+    draw_pressure_fold = hand_strength_bucket == "draw" and (
+        equity + 0.01 < required_equity
+        or ((is_allin or is_reraise) and not combo_draw)
+        or (pressure_factor >= 1.8 and not combo_draw)
+        or (street in {"turn", "river"} and pressure_factor >= 1.5 and not combo_draw)
+    )
 
     exploit_adjustment = 0.0
 
@@ -1491,8 +1603,13 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     elif bet_pressure >= 0.50:
         exploit_adjustment -= 0.01
 
+    if pressure_factor >= 1.5:
+        exploit_adjustment -= 0.02
+    if pressure_factor >= 1.8:
+        exploit_adjustment -= 0.03
+
     exploit_adjustment *= sample_weight
-    exploit_adjustment = _clamp(exploit_adjustment, -0.10, 0.08)
+    exploit_adjustment = _clamp(exploit_adjustment, -0.16, 0.08)
 
     exploit_adjustment += advisor_profile.postflop_base_shift
 
@@ -1510,11 +1627,13 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
         exploit_adjustment += advisor_profile.cash_ev_bias
 
     decision_score = raw_edge + exploit_adjustment
+    aggression_score = decision_score * multiway_factor
 
     can_check = "check" in available_kinds
     can_call = "call" in available_kinds
     can_fold = "fold" in available_kinds
     can_raise = _can_raise(available_kinds)
+    allow_bluff = not (players_in_hand >= 3 and not strong_draw)
 
     action_kind = None
 
@@ -1532,7 +1651,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 threshold -= 0.01
 
-            if can_raise and decision_score > threshold:
+            if can_raise and aggression_score > threshold:
                 action_kind = _raise_action_kind(available_kinds, street) or "check"
             else:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
@@ -1546,7 +1665,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 threshold += 0.02
 
-            if can_raise and decision_score > threshold and equity >= 0.56:
+            if can_raise and aggression_score > threshold and equity >= 0.56:
                 action_kind = _raise_action_kind(available_kinds, street) or "check"
             else:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
@@ -1565,7 +1684,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 threshold += 0.04
 
-            if can_raise and decision_score > threshold and equity >= 0.62 and players_in_hand <= 2:
+            if can_raise and aggression_score > threshold and equity >= 0.62 and players_in_hand <= 2:
                 action_kind = _raise_action_kind(available_kinds, street) or "check"
             else:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
@@ -1589,8 +1708,9 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
                 bluff_threshold -= 0.03
             if fold_to_cbet_pct >= 0.60 and street == "flop":
                 bluff_threshold -= 0.02
+            bluff_threshold *= multiway_factor
 
-            if can_raise and decision_score > bluff_threshold:
+            if can_raise and allow_bluff and aggression_score > bluff_threshold:
                 action_kind = _raise_action_kind(available_kinds, street) or "check"
             else:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
@@ -1607,8 +1727,9 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
                 bluff_threshold += 0.08
             if showdown_value:
                 bluff_threshold += 0.05
+            bluff_threshold *= multiway_factor
 
-            if can_raise and decision_score > bluff_threshold:
+            if can_raise and allow_bluff and aggression_score > bluff_threshold:
                 action_kind = _raise_action_kind(available_kinds, street) or "check"
             else:
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
@@ -1621,7 +1742,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 raise_threshold += 0.02
 
-            if can_raise and decision_score > raise_threshold and equity >= 0.68:
+            if can_raise and aggression_score > raise_threshold and equity >= 0.68:
                 action_kind = _raise_action_kind(available_kinds, street)
                 if action_kind is None:
                     action_kind = "call" if can_call else "check"
@@ -1637,11 +1758,11 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 raise_threshold += 0.04
 
-            if can_raise and decision_score > raise_threshold and equity >= 0.62:
+            if can_raise and aggression_score > raise_threshold and equity >= 0.62 and pressure_factor < 1.8:
                 action_kind = _raise_action_kind(available_kinds, street)
                 if action_kind is None:
                     action_kind = "call" if can_call else "check"
-            elif decision_score >= -0.02 and can_call:
+            elif decision_score >= -0.02 and can_call and equity >= required_equity:
                 action_kind = "call"
             else:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
@@ -1653,11 +1774,11 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 raise_threshold += 0.05
 
-            if can_raise and decision_score > raise_threshold and equity >= 0.58:
+            if can_raise and aggression_score > raise_threshold and equity >= 0.58 and pressure_factor < 1.6:
                 action_kind = _raise_action_kind(available_kinds, street)
                 if action_kind is None:
                     action_kind = "call" if can_call else "check"
-            elif decision_score >= -0.01 and can_call:
+            elif not prefer_fold and decision_score >= -0.01 and can_call and equity >= required_equity:
                 action_kind = "call"
             else:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
@@ -1679,7 +1800,14 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             if villain_type in {"calling_station", "passive_fish"}:
                 call_floor -= 0.005
 
-            if decision_score >= call_floor and can_call:
+            continue_threshold = max(call_floor, 0.0) * pressure_factor
+            if (
+                not prefer_fold
+                and decision_score >= call_floor
+                and raw_edge >= -continue_threshold
+                and equity >= required_equity
+                and can_call
+            ):
                 action_kind = "call"
             else:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
@@ -1701,21 +1829,44 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
                 semi_bluff_raise_threshold -= 0.03
             if villain_type in {"calling_station", "passive_fish"}:
                 semi_bluff_raise_threshold += 0.05
+            semi_bluff_raise_threshold *= multiway_factor
 
-            if can_raise and decision_score > semi_bluff_raise_threshold and combo_draw and players_in_hand <= 2:
+            if (
+                can_raise
+                and allow_bluff
+                and aggression_score > semi_bluff_raise_threshold
+                and combo_draw
+                and players_in_hand <= 2
+                and pressure_factor < 1.6
+            ):
                 action_kind = _raise_action_kind(available_kinds, street)
                 if action_kind is None:
                     action_kind = "call" if can_call else "check"
-            elif decision_score >= call_floor and can_call:
+            elif (
+                not draw_pressure_fold
+                and decision_score >= call_floor
+                and equity >= required_equity
+                and can_call
+            ):
                 action_kind = "call"
             else:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
 
         else:
-            if showdown_value and decision_score >= 0.03 and can_call and bet_pressure <= 0.35:
+            if showdown_value and decision_score >= 0.03 and can_call and bet_pressure <= 0.35 and pressure_factor < 1.5:
                 action_kind = "call"
             else:
                 action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+    if to_call > 0 and force_defensive_fold and hand_strength_bucket not in {"monster", "strong"}:
+        action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+    if to_call > 0 and prefer_fold and action_kind == "call" and hand_strength_bucket in {"medium", "draw", "weak", "medium_strong"}:
+        action_kind = "fold" if can_fold else ("check" if can_check else "call")
+
+    if to_call > 0 and hand_strength_bucket == "draw" and action_kind == "call":
+        if draw_pressure_fold or equity < required_equity:
+            action_kind = "fold" if can_fold else ("check" if can_check else "call")
 
     if action_kind in {"raise", "bet"}:
         if hand_strength_bucket == "weak":
@@ -1725,20 +1876,20 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
                 action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "medium":
-            if street in {"turn", "river"} and equity < 0.68:
+            if street in {"turn", "river"} and (equity < 0.68 or pressure_factor >= 1.5):
                 if to_call > 0:
-                    action_kind = "call" if can_call else ("check" if can_check else "fold")
+                    action_kind = "fold" if can_fold else ("check" if can_check else "call")
                 else:
                     action_kind = "check" if can_check else ("call" if can_call else "fold")
 
         elif hand_strength_bucket == "draw":
-            if street == "river":
+            if street == "river" or pressure_factor >= 1.6:
                 action_kind = "check" if can_check else ("fold" if can_fold else "call")
 
     if street == "river" and action_kind in {"raise", "bet"}:
         if hand_strength_bucket in {"medium", "draw", "weak"}:
             if to_call > 0:
-                action_kind = "call" if can_call else ("check" if can_check else "fold")
+                action_kind = "fold" if can_fold else ("check" if can_check else "call")
             elif can_check:
                 action_kind = "check"
 
@@ -1758,7 +1909,7 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
     reason = (
         f"street={street} eq={equity:.2f} req={required_equity:.2f} "
         f"raw={raw_edge:+.2f} adj={exploit_adjustment:+.2f} score={decision_score:+.2f} "
-        f"hand={hand_class} pair={pair_type} bucket={hand_strength_bucket} "
+        f"pressure={pressure_factor:.2f} hand={hand_class} pair={pair_type} bucket={hand_strength_bucket} "
         f"draws=fd:{int(flush_draw)} oesd:{int(open_ended)} gs:{int(gutshot)} "
         f"villain={villain_type} profile={advisor_profile.name}"
     )
@@ -1775,18 +1926,31 @@ def decide_postflop_action(table_state: Dict, advisor_profile: Optional[AdvisorP
             "stack_zone": stack_zone,
             "effective_bb": round(effective_bb, 4),
             "equity": round(equity, 4),
+            "multiway_factor": round(multiway_factor, 4),
+            "pressure_factor": round(pressure_factor, 4),
+            "raise_size_ratio": round(raise_size_ratio, 4),
+            "is_raise": is_raise,
+            "is_reraise": is_reraise,
+            "is_allin": is_allin,
+            "base_equity_threshold": round(base_equity_threshold, 4),
             "required_equity": round(required_equity, 4),
             "raw_edge": round(raw_edge, 4),
             "exploit_adjustment": round(exploit_adjustment, 4),
             "decision_score": round(decision_score, 4),
+            "aggression_score": round(aggression_score, 4),
             "hand_class": hand_class,
             "pair_type": pair_type,
+            "relative_hand_category": relative_hand_category,
             "hand_strength_bucket": hand_strength_bucket,
             "flush_draw": flush_draw,
             "open_ended": open_ended,
             "gutshot": gutshot,
             "combo_draw": combo_draw,
             "strong_draw": strong_draw,
+            "allow_bluff": allow_bluff,
+            "prefer_fold": prefer_fold,
+            "force_defensive_fold": force_defensive_fold,
+            "draw_pressure_fold": draw_pressure_fold,
             "showdown_value": showdown_value,
             "vpip_pct": round(vpip_pct, 4),
             "pfr_pct": round(pfr_pct, 4),
